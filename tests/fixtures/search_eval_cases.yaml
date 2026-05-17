@@ -1,0 +1,93 @@
+# Real-vault Cortex search ranking eval cases.
+# Expected files are intentionally note-level, not chunk-id-level, so the
+# benchmark survives heading split churn while still catching ranking drift.
+cases:
+  - id: cortex-scoring-keywords
+    query: hermes-cortex scoring search ranking BM25 vector RRF
+    expected_top_k: 3
+    expected_files:
+      - 30_projects/Roadmap - Cortex Search Scoring.md
+      - 20_decisions/Decision - Cortex Search Scoring stabilisieren.md
+      - 30_projects/Project - hermes-cortex.md
+
+  - id: cortex-scoring-german
+    query: was weißt du über scoring von cortex
+    expected_top_k: 5
+    expected_files:
+      - 30_projects/Roadmap - Cortex Search Scoring.md
+      - 20_decisions/Decision - Cortex Search Scoring stabilisieren.md
+      - 30_projects/Project - hermes-cortex.md
+
+  - id: semantic-ranking-experiments
+    query: Semantic Ranking verbessern Embedding-Modell Cross-Encoder
+    expected_top_k: 5
+    expected_files:
+      - 30_projects/Roadmap - Cortex Search Scoring.md
+      - 20_decisions/Decision - Cortex Search Scoring stabilisieren.md
+
+  - id: plugin-entrypoint-runtime
+    query: cortex plugin entry point standalone runtime path
+    expected_top_k: 5
+    expected_files:
+      - "20_decisions/Decision - Cortex Plugin: Entry-Point durch Standalone-Plugin ersetzen.md"
+      - 30_projects/Project - hermes-cortex.md
+      - 10_facts/Workspace Layout.md
+
+  - id: kanban-specify-pitfall
+    query: Kanban specify status blocked user review
+    expected_top_k: 5
+    expected_files:
+      - 40_runbooks/Runbook - Kanban Triage Workflow.md
+      - 20_decisions/Decision - Kanban Project Lifecycle v2.md
+      - 10_facts/Hermes Nightly Knowledge Promotion.md
+
+  - id: memory-query-flow-topk
+    query: memory-query-flow vault_search top_k BM25 wikilink false negative
+    expected_top_k: 5
+    notes: Current expectation uses existing vault notes that document memory retrieval/Cortex behavior; the old Memory Query Flow and Config Traps filenames are prompt-memory/skill pointers, not vault notes.
+    expected_files:
+      - 20_decisions/Decision - Prefer Vault-Cortex over session_search.md
+      - 30_projects/Project - Hermes VM.md
+      - 30_projects/Project - hermes-cortex.md
+
+  - id: cortex-runtime-plugin-path
+    query: Runtime plugin ~/.hermes/plugins/cortex git checkout install.sh with hermes venv
+    expected_top_k: 5
+    expected_files:
+      - 30_projects/Project - hermes-cortex.md
+      - "20_decisions/Decision - Cortex Plugin: Entry-Point durch Standalone-Plugin ersetzen.md"
+      - 10_facts/Workspace Layout.md
+
+  - id: nightly-promotion-formats
+    query: nightly knowledge promotion Signal jsonl TUI session json request_dump ignore
+    expected_top_k: 5
+    notes: Current expectation is pinned to existing nightly-promotion notes; the old Nightly Knowledge Promotion runbook filename is now Runbook - Promote session knowledge.md.
+    expected_files:
+      - 10_facts/Hermes Nightly Knowledge Promotion.md
+      - 40_runbooks/Runbook - Promote session knowledge.md
+      - 20_decisions/Decision - Session-Cleanup nach Promotion.md
+
+  - id: signal-voice-flow
+    query: Signal Voice Flow text_to_speech ogg send_message MEDIA
+    expected_top_k: 5
+    notes: Current expectation is pinned to actual vault notes that document Signal media/TTS delivery; the previously named Signal Integration files do not exist in the vault.
+    expected_files:
+      - 10_facts/Signal sidecar on jarvis.md
+      - 10_facts/Hermes TTS Stimme.md
+      - 40_runbooks/Runbook - Signal TTS-Audio-Zustellung Pfad-Bug.md
+
+  - id: workspace-layout
+    query: hermes-workspace vault opt jarvis homebase hermes runtime layout
+    expected_top_k: 5
+    expected_files:
+      - 10_facts/Workspace Layout.md
+      - 30_projects/Project - hermes-cortex.md
+
+  - id: cortex-maintenance-index-embed
+    query: cortex index embed no path flag Map Note post write
+    expected_top_k: 5
+    notes: Current expectation is pinned to existing Cortex maintenance/workflow notes; old Memory Query Flow and Config Traps filenames are not present in the vault.
+    expected_files:
+      - 40_runbooks/Runbook - Cortex Standalone Plugin Workflow.md
+      - 30_projects/Project - hermes-cortex.md
+      - 10_facts/Workspace Layout.md

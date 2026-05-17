@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local data / indices
+chunks.jsonl
+chroma/
+*.sqlite
+*.sqlite3
+
+# Local config
+config.yaml
+.env
+
+# Auto-generated graph / coverage
+.coverage
+graph.html
+graph_data.json
+graph_viewer.html
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store

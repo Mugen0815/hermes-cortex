@@ -1,0 +1,105 @@
+# hermes-cortex example configuration
+# Copy to config.yaml and adjust paths.
+
+vault:
+  # Path to the Obsidian vault that cortex curates.
+  path: ~/hermes-workspace/vault
+
+  # Folders to index (relative to vault path). Empty list = all folders below.
+  include_folders:
+    - 10_facts
+    - 20_decisions
+    - 30_projects
+    - 40_runbooks
+    - 50_people
+    - 60_maps
+
+  # Folders explicitly excluded from indexing.
+  exclude_folders:
+    - 00_inbox
+    - 80_templates
+
+# Hermes memory files: read as complementary context, NOT indexed into the vault.
+# If a path is missing, cortex skips it silently.
+hermes_memory:
+  memory_path: ~/.hermes/memories/MEMORY.md
+  user_path: ~/.hermes/memories/USER.md
+  soul_path: ~/.hermes/SOUL.md
+
+index:
+  chunks_path: ~/.hermes/cortex/chunks.jsonl
+  chroma_path: ~/.hermes/cortex/chroma
+  collection: cortex-vault
+
+embeddings:
+  model: sentence-transformers/all-MiniLM-L6-v2
+  device: auto  # 'auto' picks cuda > mps > cpu; or set 'cpu', 'cuda', 'mps'
+
+search:
+  top_k: 10
+  bm25_weight: 0.5
+  vector_weight: 0.5
+  rrf_k: 60
+  wikilink_traversal: 1  # hops; 0 disables
+  recency_boost: true
+  recency_max_boost: 0.20
+  importance_boost: true
+  importance_max_boost: 0.30
+  max_boost_multiplier: 1.20  # conservative cap for recency * importance
+  link_chunk_penalty: 0.75    # downrank obvious Links/Related chunks for content queries
+
+context_builder:
+  token_budget: 4000
+  cite_sources: true
+  include_hermes_memory: false  # opt in to prepend MEMORY.md/USER.md/SOUL.md to context
+
+# Cortex-managed Hermes cron jobs.
+# Public-safe defaults keep jobs disabled; set enabled: true in your private config.
+# Public-safe default delivery is "origin". For a local Signal override, set
+# deliver in your private ~/.hermes/cortex/config.yaml, not in repo defaults.
+cron:
+  nightly_promotion:
+    enabled: false
+    name: hermes-cortex-nightly-promotion
+    schedule: "0 2 * * *"
+    # Used by the prompt/lookback wording. Actual schedule interpretation follows
+    # the Hermes scheduler runtime timezone (global Hermes config or server-local).
+    timezone: Europe/Berlin
+    deliver: origin
+    enabled_toolsets: [file, terminal]
+    lookback_days: 1
+    session_globs:
+      - ~/.hermes/sessions/*.jsonl
+      - ~/.hermes/sessions/session_*.json
+    dry_run_first: true
+
+  weekly_review:
+    enabled: false
+    name: hermes-cortex-weekly-review
+    schedule: "0 8 * * 1"
+    # Used by the prompt/report wording. Actual schedule interpretation follows
+    # the Hermes scheduler runtime timezone (global Hermes config or server-local).
+    timezone: Europe/Berlin
+    deliver: origin
+    output_format: markdown
+    dry_run: true
+    stale_days: 180
+    stale_min_importance: 4.0
+    consolidation_min_degree: 3
+
+# Hermes lifecycle hooks — each hook can be enabled independently.
+hooks:
+  # on_session_start: warms the search/cache state for normal chat sessions.
+  cache_warm:
+    enabled: false
+
+  # pre_llm_call: injects vault context, and optionally the memory-query-flow skill.
+  context_injection:
+    enabled: false
+    budget: 1000
+    query: "current projects, recent decisions, and active tasks"
+    load_skill: false
+    skill_path: ""         # empty → $HERMES_HOME/skills/long-term-memory/memory-query-flow/SKILL.md
+
+logging:
+  level: INFO

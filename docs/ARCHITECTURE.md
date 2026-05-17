@@ -1,0 +1,123 @@
+# Architecture
+
+`hermes-cortex` is a local retrieval layer for Hermes Agent. The Markdown vault
+is the source of truth; generated artifacts are rebuildable caches.
+
+## Data flow
+
+```text
+Markdown vault (*.md)
+  │
+  ▼
+indexer.py
+  ├─ parses YAML frontmatter
+  ├─ chunks notes by headings
+  ├─ extracts wikilinks
+  └─ writes ~/.hermes/cortex/chunks.jsonl
+  │
+  ├──────────────┐
+  ▼              ▼
+embedder.py      graph_index.py
+  │              │
+  ▼              ▼
+Chroma           graph_nodes.jsonl / graph_edges.jsonl / graph_broken.jsonl
+  │              │
+  └──────┬───────┘
+         ▼
+search.py
+  ├─ BM25 lexical ranking
+  ├─ vector ranking
+  ├─ wikilink graph expansion
+  ├─ metadata filters
+  └─ RRF fusion + recency/importance boosts
+         │
+         ▼
+context.py
+  └─ token-budgeted Markdown context with citations
+         │
+         ▼
+Hermes tools
+  ├─ vault_search
+  ├─ vault_read_note
+  └─ vault_build_context
+```
+
+## Runtime integration
+
+Hermes loads Cortex as a standalone directory plugin:
+
+```text
+~/.hermes/plugins/cortex/
+├── plugin.yaml
+├── __init__.py
+├── plugin_runtime.py
+└── cortex/
+```
+
+`plugin.yaml` declares the plugin. Hermes imports root `__init__.py`, which calls
+`register(ctx)` and delegates tool, hook, and CLI registration to
+`plugin_runtime.py`.
+
+The active runtime source is the plugin checkout itself. Keep that checkout in sync
+with the development repo via `git pull --ff-only origin main` inside
+`~/.hermes/plugins/cortex/`; otherwise the `hermes cortex ...` command surface can
+lag behind `python -m cortex.cli ...`. The runtime smoke check is:
+
+```bash
+scripts/smoke-runtime-cortex-cli.sh
+```
+
+## Knowledge sources
+
+Cortex distinguishes between indexed vault knowledge and Hermes runtime memory.
+
+| Source | Indexed? | Purpose |
+|---|---:|---|
+| Markdown vault | Yes | Durable facts, decisions, projects, runbooks |
+| `~/.hermes/memories/MEMORY.md` | No | Compact runtime facts |
+| `~/.hermes/memories/USER.md` | No | User preferences/profile |
+| `~/.hermes/SOUL.md` | No | Agent persona/rules |
+
+The vault is embedded and searched. Hermes memory files may be included by the
+context builder as extra prompt context, but they are not copied into the vault
+or vector store.
+
+## Main components
+
+| Component | Role |
+|---|---|
+| `cortex.config` | Loads and validates Cortex config |
+| `cortex.indexer` | Parses Markdown and writes `chunks.jsonl` |
+| `cortex.embedder` | Computes embeddings and stores them in Chroma |
+| `cortex.search` | Hybrid search and ranked result fusion |
+| `cortex.graph_index` | Builds graph artifacts from notes and wikilinks |
+| `cortex.graph_diagnostics` | Reports broken links, orphans, hubs, stale notes |
+| `cortex.context` | Builds cited Markdown context under a token budget |
+| `cortex.plugin` | Pure Python tool API used by Hermes integration |
+| `plugin_runtime.py` | Hermes plugin registration layer |
+| `cortex.cli` | Standalone and Hermes-routed CLI commands |
+
+## Search model
+
+Search combines three channels:
+
+1. **BM25** — exact/lexical matches over normalized chunk text
+2. **Vector** — semantic matches from Chroma embeddings
+3. **Graph** — nearby chunks via wikilink expansion
+
+Ranks are fused with weighted reciprocal rank fusion (RRF). Optional recency and
+importance boosts are applied after fusion. Missing metadata stays neutral; it is
+not treated as medium importance by accident.
+
+## Rebuild policy
+
+Generated artifacts are disposable:
+
+```bash
+cortex index --force
+cortex embed --force
+cortex graph build --force
+```
+
+If search behavior is suspicious, rebuild before theorizing. Machines enjoy
+humbling us.

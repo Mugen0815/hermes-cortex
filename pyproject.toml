@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-cortex"
+version = "0.1.0"
+description = "Cognitive architecture and memory lifecycle for Hermes-based AI assistants."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "hermes-cortex contributors" }]
+license = "MIT"
+keywords = ["hermes", "memory", "rag", "obsidian", "retrieval"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "chromadb>=0.5",
+    "sentence-transformers>=2.7",
+    "rank-bm25>=0.2.2",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "wheel>=0.43",
+]
+
+[project.scripts]
+cortex = "cortex.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cortex*"]
+
+[tool.setuptools.package-data]
+"cortex" = ["_seed/**/*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

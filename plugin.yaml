@@ -1,0 +1,11 @@
+name: cortex
+version: "0.1.0"
+description: hermes-cortex vault tools — hybrid search, note reading, context building
+kind: standalone
+provides_tools:
+  - vault_search
+  - vault_read_note
+  - vault_build_context
+provides_hooks:
+  - on_session_start
+  - pre_llm_call

@@ -215,13 +215,21 @@ def _resolve_vault_path(raw: str, vault_root: Path) -> Path:
     return p
 
 
-def _iter_explicit_paths(paths: Iterable[str], vault_root: Path) -> list[Path]:
-    """Resolve explicit note or directory paths, relative to vault when needed."""
+def _iter_explicit_paths(paths: Iterable[str], cfg: Config) -> list[Path]:
+    """Resolve explicit note or directory paths, relative to vault when needed.
+
+    Directory paths use the same configured vault traversal policy as indexing.
+    Direct file paths intentionally remain exact targets: a caller may validate a
+    single note in an otherwise excluded folder as long as it stays inside the
+    vault and matches the default note rules.
+    """
+    vault_root = cfg.vault.path.resolve()
+    traversable_notes = list(iter_vault_files(cfg))
     resolved: list[Path] = []
     for raw in paths:
         p = _resolve_vault_path(raw, vault_root)
         if p.is_dir():
-            resolved.extend(sorted(x for x in p.rglob("*.md") if _is_valid_vault_note(x, vault_root)))
+            resolved.extend(note for note in traversable_notes if note.is_relative_to(p))
         elif _is_valid_vault_note(p, vault_root):
             resolved.append(p)
         else:
@@ -240,10 +248,9 @@ def _iter_explicit_paths(paths: Iterable[str], vault_root: Path) -> list[Path]:
 
 def collect_frontmatter_files(cfg: Config, paths: Iterable[str] | None = None) -> list[Path]:
     """Collect vault markdown files, optionally constrained by explicit paths."""
-    vault_root = cfg.vault.path.resolve()
     explicit = list(paths or [])
     if explicit:
-        return _iter_explicit_paths(explicit, vault_root)
+        return _iter_explicit_paths(explicit, cfg)
     return list(iter_vault_files(cfg))
 
 

@@ -16,7 +16,7 @@ from cortex.frontmatter_validator import validate_frontmatter
 CONFIG_TEMPLATE = dedent("""\
     vault:
       path: {vault}
-    index:
+{vault_filters}    index:
       chunks_path: {chunks}
       chroma_path: {chroma}
       collection: test-coll
@@ -26,11 +26,23 @@ CONFIG_TEMPLATE = dedent("""\
 """)
 
 
-def _write_config(tmp_path: Path, vault: Path) -> Path:
+def _write_config(
+    tmp_path: Path,
+    vault: Path,
+    *,
+    include_folders: list[str] | None = None,
+    exclude_folders: list[str] | None = None,
+) -> Path:
+    vault_filters = ""
+    if include_folders is not None:
+        vault_filters += f"      include_folders: [{', '.join(include_folders)}]\n"
+    if exclude_folders is not None:
+        vault_filters += f"      exclude_folders: [{', '.join(exclude_folders)}]\n"
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
         CONFIG_TEMPLATE.format(
             vault=vault,
+            vault_filters=vault_filters,
             chunks=tmp_path / "chunks.jsonl",
             chroma=tmp_path / "chroma",
         ),
@@ -202,6 +214,41 @@ def test_validate_frontmatter_explicit_directory_uses_vault_skip_rules(tmp_path:
     report = validate_frontmatter(load_config(cfg), paths=["."])
 
     assert [file.file for file in report.files] == ["Good.md"]
+    assert report.error_count == 0
+
+
+def test_validate_frontmatter_explicit_directory_honors_include_exclude_folders(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    (vault / "keep").mkdir(parents=True)
+    (vault / "skip").mkdir()
+    (vault / "other").mkdir()
+    (vault / "keep" / "Note.md").write_text(_valid_note(), encoding="utf-8")
+    (vault / "skip" / "Note.md").write_text(_valid_note(), encoding="utf-8")
+    (vault / "other" / "Note.md").write_text(_valid_note(), encoding="utf-8")
+    cfg = _write_config(
+        tmp_path,
+        vault,
+        include_folders=["keep", "skip"],
+        exclude_folders=["skip"],
+    )
+
+    report = validate_frontmatter(load_config(cfg), paths=["."])
+    excluded_dir_report = validate_frontmatter(load_config(cfg), paths=["skip"])
+
+    assert [file.file for file in report.files] == ["keep/Note.md"]
+    assert report.error_count == 0
+    assert excluded_dir_report.checked_count == 0
+
+
+def test_validate_frontmatter_explicit_single_file_bypasses_directory_filters(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    (vault / "skip").mkdir(parents=True)
+    (vault / "skip" / "Note.md").write_text(_valid_note(), encoding="utf-8")
+    cfg = _write_config(tmp_path, vault, include_folders=["keep"], exclude_folders=["skip"])
+
+    report = validate_frontmatter(load_config(cfg), paths=["skip/Note.md"])
+
+    assert [file.file for file in report.files] == ["skip/Note.md"]
     assert report.error_count == 0
 
 

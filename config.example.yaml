@@ -40,6 +40,7 @@ search:
   bm25_weight: 0.5
   vector_weight: 0.5
   rrf_k: 60
+  fetch_multiplier: 6  # per-channel candidate pool = top_k * fetch_multiplier
   wikilink_traversal: 1  # hops; 0 disables
   recency_boost: true
   recency_max_boost: 0.20

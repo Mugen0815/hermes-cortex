@@ -395,6 +395,40 @@ def test_search_fetch_multiplier_drives_vector_pool_size(
     assert fake_chroma_and_st.query_calls[0]["n_results"] == 4 * 7
 
 
+def test_search_default_fetch_multiplier_keeps_rank_58_in_candidate_pool(
+    tmp_path: Path, fake_chroma_and_st: FakeCollection
+) -> None:
+    """Default top_k=10 now fetches 60 candidates per channel.
+
+    This locks the P0 live-eval edge case where a relevant note at BM25 rank 58
+    was excluded by the previous default pool of 50 before RRF fusion.
+    """
+    cfg = Config(
+        vault=VaultConfig(path=tmp_path / "vault"),
+        hermes_memory=HermesMemoryConfig(),
+        index=IndexConfig(
+            chunks_path=tmp_path / "chunks.jsonl",
+            chroma_path=tmp_path / "chroma",
+        ),
+        embeddings=EmbeddingsConfig(model="test-model", device="cpu"),
+        search=SearchConfig(top_k=10),
+        context_builder=ContextBuilderConfig(),
+    )
+    chunks = [make_chunk(f"x.md#{i:02d}", f"memory layout candidate-{i}") for i in range(58)]
+    write_chunks_file(cfg.index.chunks_path, chunks)
+    fake_chroma_and_st.vector_results = []  # isolate candidate-pool sizing
+
+    s = HybridSearcher(cfg)
+    s._ensure_loaded()
+    pool = s._bm25_candidates(
+        "memory", cfg.search.top_k * cfg.search.fetch_multiplier
+    )
+
+    assert cfg.search.fetch_multiplier == 6
+    assert len(pool) == 58
+    assert pool[-1][0] == "x.md#57"
+
+
 def test_search_fetch_multiplier_drives_bm25_pool_size(
     tmp_path: Path, fake_chroma_and_st: FakeCollection
 ) -> None:

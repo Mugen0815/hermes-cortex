@@ -144,9 +144,9 @@ class SearchConfig:
     rrf_k: int = 60
     # Per-channel candidate pool size = top_k * fetch_multiplier. Larger pools
     # give RRF more headroom to surface chunks that aren't top in either channel
-    # alone but rank well in both. 5 is a sane default (e.g. 50 candidates per
+    # alone but rank well in both. 6 is a sane default (e.g. 60 candidates per
     # channel for top_k=10) with negligible cost on small vaults.
-    fetch_multiplier: int = 5
+    fetch_multiplier: int = 6
     wikilink_traversal: int = 1
     # Graph channel weight in the RRF fusion. The graph channel collects
     # wikilink-linked chunks of the top-N base hits (BM25 ∪ Vector after
@@ -378,7 +378,7 @@ def _validate_search(s: "SearchConfig", cfg_path: Path) -> None:
     if s.fetch_multiplier <= 0:
         errors.append(
             f"search.fetch_multiplier must be > 0 (got {s.fetch_multiplier}); "
-            f"5 is the standard default"
+            f"6 is the standard default"
         )
     if s.fetch_multiplier > 100:
         errors.append(
@@ -502,7 +502,7 @@ def load_config(path: Optional[str | Path] = None) -> Config:
         bm25_weight=float(s.get("bm25_weight", 0.5)),
         vector_weight=float(s.get("vector_weight", 0.5)),
         rrf_k=int(s.get("rrf_k", 60)),
-        fetch_multiplier=int(s.get("fetch_multiplier", 5)),
+        fetch_multiplier=int(s.get("fetch_multiplier", 6)),
         wikilink_traversal=int(s.get("wikilink_traversal", 1)),
         graph_weight=float(s.get("graph_weight", 0.2)),
         recency_boost=_to_bool(s.get("recency_boost"), default=True),

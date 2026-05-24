@@ -295,6 +295,7 @@ def test_search_config_accepts_sane_defaults(tmp_path: Path) -> None:
     assert cfg.search.rrf_k == 60
     assert cfg.search.bm25_weight == 0.5
     assert cfg.search.vector_weight == 0.5
+    assert cfg.search.fetch_multiplier == 6
     # Boost defaults
     assert cfg.search.recency_boost is True
     assert cfg.search.recency_max_boost == 0.20

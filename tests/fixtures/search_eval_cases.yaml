@@ -6,7 +6,7 @@ cases:
     query: hermes-cortex scoring search ranking BM25 vector RRF
     expected_top_k: 3
     expected_files:
-      - 30_projects/Roadmap - Cortex Search Scoring.md
+      - 30_projects/Roadmap - hermes-cortex.md
       - 20_decisions/Decision - Cortex Search Scoring stabilisieren.md
       - 30_projects/Project - hermes-cortex.md
 
@@ -14,7 +14,7 @@ cases:
     query: was weißt du über scoring von cortex
     expected_top_k: 5
     expected_files:
-      - 30_projects/Roadmap - Cortex Search Scoring.md
+      - 30_projects/Roadmap - hermes-cortex.md
       - 20_decisions/Decision - Cortex Search Scoring stabilisieren.md
       - 30_projects/Project - hermes-cortex.md
 
@@ -22,7 +22,7 @@ cases:
     query: Semantic Ranking verbessern Embedding-Modell Cross-Encoder
     expected_top_k: 5
     expected_files:
-      - 30_projects/Roadmap - Cortex Search Scoring.md
+      - 30_projects/Roadmap - hermes-cortex.md
       - 20_decisions/Decision - Cortex Search Scoring stabilisieren.md
 
   - id: plugin-entrypoint-runtime

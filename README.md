@@ -101,7 +101,7 @@ checks required vault metadata, and does not rewrite notes.
 
 ```bash
 hermes cortex validate-frontmatter --json
-hermes cortex validate-frontmatter --path 30_projects/Project - hermes-cortex.md
+hermes cortex validate-frontmatter --path '30_projects/Project - hermes-cortex.md'
 hermes cortex validate-frontmatter --strict
 ```
 
@@ -141,7 +141,7 @@ Then start a new Hermes session or `/reset` the current one.
 | `hermes cortex search "query" --top-k 10` | Search the vault from the shell |
 | `hermes cortex search-eval --output search-eval-baseline.json --baseline baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason); `--baseline` adds compare summary and baseline deltas |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
-
+| `hermes cortex config path` | Show active config path |
 | `hermes cortex config show` | Show effective config: vault, index, hooks, skill path |
 | `hermes cortex status` | Show plugin/code path plus config, vault, and index state |
 | `hermes cortex graph status` | Show graph health and diagnostics |

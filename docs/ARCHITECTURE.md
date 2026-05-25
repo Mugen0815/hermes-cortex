@@ -109,6 +109,24 @@ Ranks are fused with weighted reciprocal rank fusion (RRF). Optional recency and
 importance boosts are applied after fusion. Missing metadata stays neutral; it is
 not treated as medium importance by accident.
 
+## CLI guardrails
+
+Two operator-facing commands are intentionally read-only or diagnostic-only:
+
+- `cortex validate-frontmatter` / `hermes cortex validate-frontmatter`
+  - validates YAML frontmatter and vault metadata
+  - exits `1` on validation errors, or on warnings only when `--strict` is set
+  - `--json` emits a stable report with `schema_version`, counts, and per-file issues
+  - `--path` scopes validation to explicit notes or directories inside the vault
+- `cortex search-eval` / `hermes cortex search-eval`
+  - runs fixed real-vault ranking cases
+  - `--output` writes the JSON report, `--json` prints the same payload
+  - `--baseline` adds compare metadata and rank deltas; update baselines only after
+    `cortex validate-frontmatter` and `--lint-vault-files` pass and index/embed
+    maintenance has run
+  - report cases include `final_score`, `rrf_score`, channel ranks, boost fields,
+    and baseline comparison fields when a baseline is provided
+
 ## Rebuild policy
 
 Generated artifacts are disposable:

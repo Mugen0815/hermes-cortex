@@ -94,6 +94,27 @@ Expected:
 - `hermes cortex search ...` returns vault results after `index` + `embed`
 - `scripts/smoke-runtime-cortex-cli.sh` confirms `hermes cortex search-eval --json --allow-failures` returns the eval JSON envelope (`schema_version`, `case_count`, `passed`, `failed`, `cases`)
 
+## Frontmatter validation
+
+`hermes cortex validate-frontmatter` is read-only. It parses YAML frontmatter,
+checks required vault metadata, and does not rewrite notes.
+
+```bash
+hermes cortex validate-frontmatter --json
+hermes cortex validate-frontmatter --path 30_projects/Project - hermes-cortex.md
+hermes cortex validate-frontmatter --strict
+```
+
+Behavior:
+
+- default exit code is `0` when only warnings are present
+- any validation error returns exit code `1`
+- `--strict` upgrades warnings to exit code `1`
+- `--json` prints a stable report with `schema_version`, `vault_path`, `checked_count`, `error_count`, `warning_count`, and per-file `issues`
+- `--path` limits scope to specific note or directory paths inside the vault
+
+Common issue codes include `missing_frontmatter`, `yaml_parse_error`, `missing_required`, `missing_domain`, and `normalization_warning`.
+
 ## Update
 
 Runtime updates are Git-only. No copy, rsync, generated stub, or symlink farm. Keep your development checkout and active runtime plugin checkout (`~/.hermes/plugins/cortex/`) separate; pushing a development repo does not update `hermes cortex ...` until the runtime checkout is pulled.
@@ -116,10 +137,11 @@ Then start a new Hermes session or `/reset` the current one.
 | `hermes cortex index [--force]` | Chunk vault notes into `chunks.jsonl` |
 | `hermes cortex embed [--force]` | Build/update Chroma embeddings |
 | `hermes cortex graph build [--force]` | Build wikilink graph artifacts |
+| `hermes cortex validate-frontmatter [--json] [--strict] [--path ...]` | Read-only Vault frontmatter validation |
 | `hermes cortex search "query" --top-k 10` | Search the vault from the shell |
-| `hermes cortex search-eval --output search-eval-baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason) |
+| `hermes cortex search-eval --output search-eval-baseline.json --baseline baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason); `--baseline` adds compare summary and baseline deltas |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
-| `hermes cortex config path` | Print the active Cortex config path |
+
 | `hermes cortex config show` | Show effective config: vault, index, hooks, skill path |
 | `hermes cortex status` | Show plugin/code path plus config, vault, and index state |
 | `hermes cortex graph status` | Show graph health and diagnostics |

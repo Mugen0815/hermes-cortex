@@ -100,6 +100,7 @@ def test_runtime_plugin_cli_uses_full_cortex_parser_surface() -> None:
         "embed",
         "search",
         "search-eval",
+        "validate-frontmatter",
         "context",
         "graph",
         "config",

@@ -6,6 +6,7 @@ Subcommands:
     cortex embed   [--config PATH] [--force] [--batch-size N]
     cortex search  "<query>" [--top-k N] [filters...] [--no-boost] [--json]
     cortex search-eval [--cases PATH] [--baseline PATH] [--output PATH] [--json]
+    cortex validate-frontmatter [--config PATH] [--path PATH ...] [--json] [--strict]
     cortex context "<query>" [--top-k N] [filters...] [--budget N] [--no-hermes-memory]
     cortex config  path|show
     cortex cron    install|uninstall|status [--config PATH]
@@ -207,6 +208,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
 def _cmd_search_eval(args: argparse.Namespace) -> int:
     """Run the reproducible search ranking eval harness."""
     from cortex.search_eval import (
+        build_report_metadata,
         load_baseline,
         load_eval_cases,
         missing_expected_files,
@@ -226,12 +228,18 @@ def _cmd_search_eval(args: argparse.Namespace) -> int:
                 )
                 raise ValueError(f"expected eval files missing from vault {cfg.vault.path}: {details}")
         baseline = load_baseline(args.baseline)
+        metadata = build_report_metadata(
+            cfg,
+            config_path=args.config,
+            cases_path=args.cases,
+        )
         report = run_search_eval(
             cfg,
             cases,
             top_k=args.top_k,
             compare_unboosted=not args.no_unboosted,
             baseline=baseline,
+            metadata=metadata,
         )
     except (OSError, ValueError) as e:
         return print_error(f"Search eval failed: {e}", exit_code=2)
@@ -245,6 +253,42 @@ def _cmd_search_eval(args: argparse.Namespace) -> int:
         if args.output:
             print(f"  wrote: {args.output}")
     return 0 if args.allow_failures or report["failed"] == 0 else 1
+
+
+# ---- validate-frontmatter -----------------------------------------------------
+
+def _cmd_validate_frontmatter(args: argparse.Namespace) -> int:
+    """Validate note frontmatter without mutating the vault."""
+    from cortex.frontmatter_validator import validate_frontmatter
+
+    cfg = resolve_config(getattr(args, "config", None))
+    paths: list[str] = []
+    for group in getattr(args, "path", None) or []:
+        paths.extend(group)
+
+    try:
+        report = validate_frontmatter(cfg, paths=paths)
+    except ValueError as e:
+        return print_error(str(e), exit_code=2)
+    if args.json:
+        print_json(report.to_json())
+    else:
+        print(f"Frontmatter validation: {report.checked_count} file(s) checked")
+        print(f"Vault: {report.vault_path}")
+        print(f"Issues: {report.error_count} error(s), {report.warning_count} warning(s)")
+        for result in report.files:
+            if not result.issues:
+                continue
+            print(f"\n  {result.file}")
+            for issue in result.issues:
+                field = f" [{issue.field}]" if issue.field else ""
+                print(f"    - {issue.severity.upper()} {issue.code}{field}: {issue.message}")
+
+    if report.error_count:
+        return 1
+    if args.strict and report.warning_count:
+        return 1
+    return 0
 
 
 # ---- context ----------------------------------------------------------------
@@ -591,7 +635,14 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     ev.add_argument("--config", type=str, help="Path to config.yaml")
     ev.add_argument("--cases", type=str, help="YAML eval cases (default: tests/fixtures/search_eval_cases.yaml)")
     ev.add_argument("--top-k", type=int, default=10, help="Results per case (default: 10)")
-    ev.add_argument("--baseline", type=str, help="Previous JSON report to compare against")
+    ev.add_argument(
+        "--baseline",
+        type=str,
+        help=(
+            "Previous JSON report to compare against. Baseline updates should happen only "
+            "after lint-vault-files and index/embed maintenance pass."
+        ),
+    )
     ev.add_argument("--output", "-o", type=str, help="Write JSON report to this path")
     ev.add_argument("--json", action="store_true", help="Print full JSON report")
     ev.add_argument("--no-unboosted", action="store_true", help="Skip boosted-vs-unboosted rank comparison")
@@ -602,6 +653,23 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     )
     ev.add_argument("--allow-failures", action="store_true", help="Exit 0 even if expected ranks miss their thresholds")
     ev.set_defaults(func=_cmd_search_eval)
+
+    # validate-frontmatter
+    vf = sub.add_parser(
+        "validate-frontmatter",
+        help="Validate vault note frontmatter metadata without modifying files",
+    )
+    vf.add_argument("--config", type=str, help="Path to config.yaml")
+    vf.add_argument(
+        "--path",
+        action="append",
+        nargs="+",
+        metavar="REL_OR_ABS",
+        help="Specific note or directory path(s) to validate; relative paths resolve under the vault",
+    )
+    vf.add_argument("--json", action="store_true", help="Output JSON instead of human-readable text")
+    vf.add_argument("--strict", action="store_true", help="Treat warnings as a non-zero exit")
+    vf.set_defaults(func=_cmd_validate_frontmatter)
 
     # context
     cx = sub.add_parser(

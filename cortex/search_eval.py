@@ -9,13 +9,23 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from cortex.config import Config
+from cortex import __version__
+from cortex.config import Config, find_config
 from cortex.search import HybridSearcher, SearchResult
+
+
+BASELINE_UPDATE_RULE = (
+    "Update accepted search-eval baselines only after `cortex validate-frontmatter`/"
+    "`--lint-vault-files` pass and index/embed maintenance has been run; note "
+    "renames and roadmap consolidations are fixture drift until explicitly accepted."
+)
 
 
 @dataclass(frozen=True)
@@ -157,6 +167,127 @@ def _rank_by_file(hits: list[dict[str, Any]]) -> dict[str, int]:
     return out
 
 
+def _iso_generated_at(generated_at: str | datetime | None) -> str:
+    if generated_at is None:
+        return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(generated_at, datetime):
+        dt = generated_at if generated_at.tzinfo else generated_at.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return generated_at
+
+
+def _file_artifact(path: str | Path) -> dict[str, Any]:
+    p = Path(path).expanduser().resolve()
+    artifact: dict[str, Any] = {"path": str(p), "exists": p.exists()}
+    if p.exists():
+        stat = p.stat()
+        artifact.update({"mtime_ns": stat.st_mtime_ns})
+    if p.is_file():
+        data = p.read_bytes()
+        artifact.update(
+            {
+                "size_bytes": len(data),
+                "sha256": sha256(data).hexdigest(),
+            }
+        )
+    elif p.is_dir():
+        artifact["kind"] = "directory"
+        artifact["entry_count"] = sum(1 for _ in p.iterdir())
+    return artifact
+
+
+def build_report_metadata(
+    cfg: Config,
+    *,
+    config_path: str | Path | None = None,
+    cases_path: str | Path | None = None,
+    generated_at: str | datetime | None = None,
+) -> dict[str, Any]:
+    """Return drift-diagnosis metadata for a persisted eval report."""
+
+    chunks_path = Path(cfg.index.chunks_path).expanduser().resolve()
+    chroma_path = Path(cfg.index.chroma_path).expanduser().resolve()
+    cases_resolved = Path(cases_path).expanduser().resolve() if cases_path else default_cases_path()
+    resolved_config_path = Path(config_path).expanduser().resolve() if config_path else find_config()
+    return {
+        "generated_at": _iso_generated_at(generated_at),
+        "config_path": str(resolved_config_path) if resolved_config_path else None,
+        "vault_path": str(Path(cfg.vault.path).expanduser().resolve()),
+        "chunks_path": str(chunks_path),
+        "chroma_path": str(chroma_path),
+        "cases_path": str(cases_resolved),
+        "cortex_version": __version__,
+        "config_artifact": _file_artifact(resolved_config_path) if resolved_config_path else None,
+        "cases_artifact": _file_artifact(cases_resolved),
+        "index_artifact": _file_artifact(chunks_path),
+        "chroma_artifact": _file_artifact(chroma_path),
+        "baseline_update_rule": BASELINE_UPDATE_RULE,
+    }
+
+
+def _baseline_case_passed(case: dict[str, Any]) -> bool | None:
+    if isinstance(case.get("passed"), bool):
+        return bool(case["passed"])
+    rank = case.get("best_expected_rank")
+    expected_top_k = case.get("expected_top_k")
+    if rank is None or expected_top_k is None:
+        return None
+    return int(rank) <= int(expected_top_k)
+
+
+def _compare_summary(
+    report_cases: list[dict[str, Any]], baseline_cases: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "baseline_case_count": len(baseline_cases),
+        "current_case_count": len(report_cases),
+        "matched_case_count": 0,
+        "missing_in_baseline": [],
+        "missing_in_current": [],
+        "pass_regressions": [],
+        "pass_improvements": [],
+        "rank_regressions": [],
+        "rank_improvements": [],
+        "unknown_baseline_pass_fail": [],
+        "unchanged_pass_fail": [],
+    }
+    current_ids = {str(c.get("id")) for c in report_cases}
+    summary["missing_in_current"] = sorted(set(baseline_cases) - current_ids)
+
+    for case in report_cases:
+        case_id = str(case.get("id"))
+        base = baseline_cases.get(case_id)
+        if base is None:
+            summary["missing_in_baseline"].append(case_id)
+            continue
+        summary["matched_case_count"] += 1
+        baseline_passed = _baseline_case_passed(base)
+        current_passed = bool(case.get("passed"))
+        if baseline_passed is None:
+            summary["unknown_baseline_pass_fail"].append(case_id)
+        elif baseline_passed and not current_passed:
+            summary["pass_regressions"].append(case_id)
+        elif not baseline_passed and current_passed:
+            summary["pass_improvements"].append(case_id)
+        else:
+            summary["unchanged_pass_fail"].append(case_id)
+
+        delta = case.get("baseline_rank_delta")
+        if isinstance(delta, int):
+            if delta > 0:
+                summary["rank_regressions"].append({"id": case_id, "delta": delta})
+            elif delta < 0:
+                summary["rank_improvements"].append({"id": case_id, "delta": delta})
+
+    summary["regression_count"] = len(summary["pass_regressions"]) + len(
+        summary["rank_regressions"]
+    )
+    summary["improvement_count"] = len(summary["pass_improvements"]) + len(
+        summary["rank_improvements"]
+    )
+    return summary
+
+
 def run_search_eval(
     cfg: Config,
     cases: list[EvalCase],
@@ -164,6 +295,7 @@ def run_search_eval(
     top_k: int = 10,
     compare_unboosted: bool = True,
     baseline: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run all eval cases and return a JSON-serializable report."""
 
@@ -214,7 +346,21 @@ def run_search_eval(
         base = baseline_cases.get(case.id)
         if base is not None:
             base_rank = base.get("best_expected_rank")
+            base_passed = _baseline_case_passed(base)
             case_payload["baseline_best_expected_rank"] = base_rank
+            case_payload["baseline_passed"] = base_passed
+            case_payload["baseline_pass_delta"] = (
+                None if base_passed is None else int(ok) - int(base_passed)
+            )
+            case_payload["baseline_status_change"] = (
+                "unknown"
+                if base_passed is None
+                else "unchanged"
+                if ok == base_passed
+                else "improvement"
+                if ok
+                else "regression"
+            )
             case_payload["baseline_rank_delta"] = (
                 None if best_rank is None or base_rank is None else best_rank - int(base_rank)
             )
@@ -228,14 +374,22 @@ def run_search_eval(
 
         report_cases.append(case_payload)
 
-    return {
+    report = {
         "schema_version": 1,
+        "metadata": metadata or {},
         "top_k": top_k,
         "case_count": len(cases),
         "passed": passed,
         "failed": len(cases) - passed,
         "cases": report_cases,
     }
+    if baseline is not None:
+        report["baseline"] = {
+            "schema_version": baseline.get("schema_version"),
+            "metadata": baseline.get("metadata") if isinstance(baseline.get("metadata"), dict) else {},
+        }
+        report["compare_summary"] = _compare_summary(report_cases, baseline_cases)
+    return report
 
 
 def load_baseline(path: str | Path | None) -> dict[str, Any] | None:

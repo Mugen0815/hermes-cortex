@@ -208,6 +208,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
 def _cmd_search_eval(args: argparse.Namespace) -> int:
     """Run the reproducible search ranking eval harness."""
     from cortex.search_eval import (
+        build_report_metadata,
         load_baseline,
         load_eval_cases,
         missing_expected_files,
@@ -227,12 +228,18 @@ def _cmd_search_eval(args: argparse.Namespace) -> int:
                 )
                 raise ValueError(f"expected eval files missing from vault {cfg.vault.path}: {details}")
         baseline = load_baseline(args.baseline)
+        metadata = build_report_metadata(
+            cfg,
+            config_path=args.config,
+            cases_path=args.cases,
+        )
         report = run_search_eval(
             cfg,
             cases,
             top_k=args.top_k,
             compare_unboosted=not args.no_unboosted,
             baseline=baseline,
+            metadata=metadata,
         )
     except (OSError, ValueError) as e:
         return print_error(f"Search eval failed: {e}", exit_code=2)
@@ -628,7 +635,14 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     ev.add_argument("--config", type=str, help="Path to config.yaml")
     ev.add_argument("--cases", type=str, help="YAML eval cases (default: tests/fixtures/search_eval_cases.yaml)")
     ev.add_argument("--top-k", type=int, default=10, help="Results per case (default: 10)")
-    ev.add_argument("--baseline", type=str, help="Previous JSON report to compare against")
+    ev.add_argument(
+        "--baseline",
+        type=str,
+        help=(
+            "Previous JSON report to compare against. Baseline updates should happen only "
+            "after lint-vault-files and index/embed maintenance pass."
+        ),
+    )
     ev.add_argument("--output", "-o", type=str, help="Write JSON report to this path")
     ev.add_argument("--json", action="store_true", help="Print full JSON report")
     ev.add_argument("--no-unboosted", action="store_true", help="Skip boosted-vs-unboosted rank comparison")

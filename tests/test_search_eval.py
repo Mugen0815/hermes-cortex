@@ -16,7 +16,13 @@ from cortex.config import (
     SearchConfig,
     VaultConfig,
 )
-from cortex.search_eval import load_eval_cases, missing_expected_files, run_search_eval
+from cortex.search_eval import (
+    BASELINE_UPDATE_RULE,
+    build_report_metadata,
+    load_eval_cases,
+    missing_expected_files,
+    run_search_eval,
+)
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -176,11 +182,29 @@ def test_search_eval_report_contains_required_diagnostics(
     write_chunks(cfg.index.chunks_path)
     cases_path = tmp_path / "cases.yaml"
     write_cases(cases_path)
+    metadata = build_report_metadata(
+        cfg,
+        config_path=tmp_path / "config.yaml",
+        cases_path=cases_path,
+        generated_at="2026-05-24T00:00:00Z",
+    )
 
-    report = run_search_eval(cfg, load_eval_cases(cases_path), top_k=3)
+    report = run_search_eval(cfg, load_eval_cases(cases_path), top_k=3, metadata=metadata)
 
     assert report["case_count"] == 10
     assert report["passed"] == 10
+    assert report["metadata"]["generated_at"] == "2026-05-24T00:00:00Z"
+    assert report["metadata"]["config_path"].endswith("config.yaml")
+    assert report["metadata"]["vault_path"].endswith("vault")
+    assert report["metadata"]["chunks_path"].endswith("chunks.jsonl")
+    assert report["metadata"]["chroma_path"].endswith("chroma")
+    assert report["metadata"]["cases_path"] == str(cases_path)
+    assert report["metadata"]["cortex_version"]
+    assert report["metadata"]["index_artifact"]["exists"] is True
+    assert report["metadata"]["index_artifact"]["sha256"]
+    assert report["metadata"]["cases_artifact"]["sha256"]
+    assert report["metadata"]["chroma_artifact"]["exists"] is False
+    assert report["metadata"]["baseline_update_rule"] == BASELINE_UPDATE_RULE
     first_hit = report["cases"][0]["hits"][0]
     assert {
         "final_score",
@@ -214,6 +238,7 @@ def test_search_eval_baseline_comparison_reports_rank_delta(
             {
                 "id": "case-0",
                 "best_expected_rank": 2,
+                "expected_top_k": 1,
                 "hits": [{"rank": 2, "file": "10_facts/Alpha.md"}],
             }
         ]
@@ -222,8 +247,17 @@ def test_search_eval_baseline_comparison_reports_rank_delta(
     report = run_search_eval(cfg, cases, top_k=3, baseline=baseline)
 
     assert report["cases"][0]["baseline_best_expected_rank"] == 2
+    assert report["cases"][0]["baseline_passed"] is False
+    assert report["cases"][0]["baseline_pass_delta"] == 1
+    assert report["cases"][0]["baseline_status_change"] == "improvement"
     assert report["cases"][0]["baseline_rank_delta"] == -1
     assert report["cases"][0]["per_file_rank_delta"] == {"10_facts/Alpha.md": -1}
+    assert report["compare_summary"]["matched_case_count"] == 1
+    assert report["compare_summary"]["missing_in_baseline"] == [
+        f"case-{i}" for i in range(1, 10)
+    ]
+    assert report["compare_summary"]["pass_improvements"] == ["case-0"]
+    assert report["compare_summary"]["rank_improvements"] == [{"id": "case-0", "delta": -1}]
 
 
 def test_cli_search_eval_json_and_output_file(
@@ -256,4 +290,78 @@ def test_cli_search_eval_json_and_output_file(
     printed = json.loads(capsys.readouterr().out)
     written = json.loads(output.read_text(encoding="utf-8"))
     assert printed["case_count"] == 10
+    assert written["metadata"]["config_path"] == str(cfg_path)
+    assert written["metadata"]["cases_path"] == str(cases_path)
     assert written["cases"][0]["hits"][0]["file"] == "10_facts/Alpha.md"
+
+
+def test_search_eval_baseline_does_not_change_ranking_payload(
+    tmp_path: Path, fake_vector_empty: None
+) -> None:
+    cfg = make_config(tmp_path)
+    write_chunks(cfg.index.chunks_path)
+    cases_path = tmp_path / "cases.yaml"
+    write_cases(cases_path)
+    cases = load_eval_cases(cases_path)
+
+    without_baseline = run_search_eval(cfg, cases, top_k=3)
+    with_baseline = run_search_eval(cfg, cases, top_k=3, baseline=without_baseline)
+
+    assert with_baseline["passed"] == without_baseline["passed"]
+    assert with_baseline["failed"] == without_baseline["failed"]
+    assert with_baseline["cases"][0]["hits"] == without_baseline["cases"][0]["hits"]
+    assert with_baseline["cases"][0]["best_expected_rank"] == without_baseline["cases"][0]["best_expected_rank"]
+
+
+def test_cli_search_eval_writes_baseline_compare_summary(
+    tmp_path: Path,
+    fake_vector_empty: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cfg = make_config(tmp_path)
+    write_chunks(cfg.index.chunks_path)
+    cfg_path = tmp_path / "config.yaml"
+    write_config(cfg_path, cfg)
+    cases_path = tmp_path / "cases.yaml"
+    write_cases(cases_path)
+    baseline = tmp_path / "baseline.json"
+    output = tmp_path / "current.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "metadata": {"generated_at": "2026-05-23T00:00:00Z"},
+                "cases": [
+                    {
+                        "id": "case-0",
+                        "best_expected_rank": 2,
+                        "passed": False,
+                        "hits": [{"rank": 2, "file": "10_facts/Alpha.md"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "search-eval",
+        "--config",
+        str(cfg_path),
+        "--cases",
+        str(cases_path),
+        "--top-k",
+        "3",
+        "--baseline",
+        str(baseline),
+        "--output",
+        str(output),
+        "--json",
+    ])
+
+    assert rc == 0
+    printed = json.loads(capsys.readouterr().out)
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert printed["compare_summary"]["pass_improvements"] == ["case-0"]
+    assert written["compare_summary"] == printed["compare_summary"]
+    assert written["cases"][0]["baseline_status_change"] == "improvement"

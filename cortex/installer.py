@@ -444,6 +444,8 @@ cron:
     deliver: origin
     enabled_toolsets: [file, terminal]
     lookback_days: 1
+    state_db_path: ~/.hermes/state.db
+    legacy_fallback_enabled: true
     session_globs:
       - ~/.hermes/sessions/*.jsonl
       - ~/.hermes/sessions/session_*.json

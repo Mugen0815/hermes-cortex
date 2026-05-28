@@ -82,6 +82,20 @@ The vault is embedded and searched. Hermes memory files may be included by the
 context builder as extra prompt context, but they are not copied into the vault
 or vector store.
 
+## Nightly/session promotion
+
+NightlyPromotion uses Hermes SessionDB as the primary session source: it reads
+`~/.hermes/state.db` first, falls back to legacy JSON/JSONL session files only
+when the database is missing, unreadable, schema-incompatible, or otherwise
+fails the documented selection rules, and ignores `request_dump_*.json` even if
+the file glob would match them.
+
+Nightly report payloads should make the source choice visible: which backend was
+primary, how many sessions each backend saw, whether fallback was used, the
+fallback reason, the ignored request-dump count, and the lookback cutoff/
+timezone. No empty-file-glob story is acceptable if state.db actually contains
+recent sessions.
+
 ## Main components
 
 | Component | Role |

@@ -10,6 +10,7 @@ from cortex.cron import (
     _build_weekly_job,
     _job_id,
     _lifecycle_commands,
+    _session_source_command,
     _weekly_lifecycle_command,
     install,
     status,
@@ -24,7 +25,14 @@ def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
         cortex_bin="cortex",
         lookback_days=1,
         timezone="Europe/Berlin",
+        state_db_path="~/.hermes/state.db",
+        legacy_fallback_enabled=True,
         session_globs_block="   - `~/.hermes/sessions/*.jsonl`\n   - `~/.hermes/sessions/session_*.json`",
+        session_source_command=(
+            "python3 -m cortex.session_sources --lookback-days 1 --timezone Europe/Berlin "
+            "--state-db-path ~/.hermes/state.db --session-glob ~/.hermes/sessions/*.jsonl "
+            "--session-glob ~/.hermes/sessions/session_*.json"
+        ),
         lifecycle_commands=(
             "cortex lifecycle nightly --dry-run && \\\n   cortex lifecycle nightly --write && \\\n   cortex lifecycle maintenance"
         ),
@@ -45,6 +53,9 @@ def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
     assert "*.jsonl" in prompt
     assert "session_*.json" in prompt
     assert "request_dump_*.json" in prompt
+    assert "python3 -m cortex.session_sources" in prompt
+    assert "SessionDB primär" in prompt
+    assert "Quelle: backend=<state_db|legacy_files>" in prompt
     assert "/private/dev/hermes-cortex/.venv/bin/cortex" not in prompt
 
 
@@ -83,8 +94,13 @@ def test_build_job_uses_default_public_safe_config():
     assert job["schedule_display"] == "0 2 * * *"
     assert job["deliver"] == "origin"
     assert job["enabled_toolsets"] == ["file", "terminal"]
+    assert "~/.hermes/state.db" in job["prompt"]
+    assert "python3 -m cortex.session_sources" in job["prompt"]
     assert "~/.hermes/sessions/*.jsonl" in job["prompt"]
     assert "~/.hermes/sessions/session_*.json" in job["prompt"]
+    assert job["metadata"]["cortex"]["session_source"]["state_db_path"] == "~/.hermes/state.db"
+    assert job["metadata"]["cortex"]["session_source"]["legacy_fallback_enabled"] is True
+    assert "fallback_reason" in job["metadata"]["cortex"]["session_source"]["diagnostics_expected"]
     assert job["metadata"]["cortex"]["timezone"] == "Europe/Berlin"
     assert job["metadata"]["cortex"]["timezone_scope"].startswith("prompt/lookback only")
 
@@ -98,6 +114,8 @@ def test_build_job_uses_custom_config_values():
         deliver="origin",
         enabled_toolsets=["file"],
         lookback_days=3,
+        state_db_path="/tmp/state.db",
+        legacy_fallback_enabled=False,
         session_globs=["/tmp/sessions/*.json"],
         dry_run_first=False,
     )
@@ -110,10 +128,33 @@ def test_build_job_uses_custom_config_values():
     assert job["deliver"] == "origin"
     assert job["enabled_toolsets"] == ["file"]
     assert "letzten 3 Tag(en) (UTC)" in job["prompt"]
+    assert "/tmp/state.db" in job["prompt"]
+    assert "--no-legacy-fallback" in job["prompt"]
     assert "/tmp/sessions/*.json" in job["prompt"]
     assert "lifecycle nightly --dry-run" not in job["prompt"]
     assert "lifecycle nightly --write" in job["prompt"]
     assert job["metadata"]["cortex"]["dry_run_first"] is False
+    assert job["metadata"]["cortex"]["session_source"]["state_db_path"] == "/tmp/state.db"
+    assert job["metadata"]["cortex"]["session_source"]["legacy_fallback_enabled"] is False
+
+
+def test_session_source_command_includes_state_db_and_legacy_controls():
+    cfg = CronNightlyPromotionConfig(
+        lookback_days=2,
+        timezone="UTC",
+        state_db_path="/tmp/state.db",
+        legacy_fallback_enabled=False,
+        session_globs=["/tmp/*.json"],
+    )
+
+    command = _session_source_command(cfg)
+
+    assert "python3 -m cortex.session_sources" in command
+    assert "--lookback-days 2" in command
+    assert "--timezone UTC" in command
+    assert "--state-db-path /tmp/state.db" in command
+    assert "--no-legacy-fallback" in command
+    assert "--session-glob '/tmp/*.json'" in command
 
 
 def test_install_uses_runtime_cortex_cli(monkeypatch, tmp_path):

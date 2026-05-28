@@ -190,6 +190,8 @@ class CronNightlyPromotionConfig:
     deliver: str = "origin"
     enabled_toolsets: list[str] = field(default_factory=lambda: ["file", "terminal"])
     lookback_days: int = 1
+    state_db_path: str = "~/.hermes/state.db"
+    legacy_fallback_enabled: bool = True
     session_globs: list[str] = field(default_factory=lambda: [
         "~/.hermes/sessions/*.jsonl",
         "~/.hermes/sessions/session_*.json",
@@ -289,6 +291,8 @@ def _validate_cron_nightly_promotion(c: "CronNightlyPromotionConfig", cfg_path: 
         errors.append(
             f"cron.nightly_promotion.lookback_days must be >= 1 (got {c.lookback_days})"
         )
+    if not c.state_db_path.strip():
+        errors.append("cron.nightly_promotion.state_db_path must be a non-empty path")
     if not c.enabled_toolsets:
         errors.append("cron.nightly_promotion.enabled_toolsets must contain at least one toolset")
     if not c.session_globs:
@@ -538,6 +542,11 @@ def load_config(path: Optional[str | Path] = None) -> Config:
             "cron.nightly_promotion.enabled_toolsets",
         ),
         lookback_days=int(np_raw.get("lookback_days", default_np.lookback_days)),
+        state_db_path=str(np_raw.get("state_db_path", default_np.state_db_path)).strip(),
+        legacy_fallback_enabled=_to_bool(
+            np_raw.get("legacy_fallback_enabled"),
+            default=default_np.legacy_fallback_enabled,
+        ),
         session_globs=_as_str_list(
             np_raw.get("session_globs", default_np.session_globs),
             "cron.nightly_promotion.session_globs",

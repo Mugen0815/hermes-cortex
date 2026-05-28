@@ -145,7 +145,15 @@ if [[ "$INSTALL_HERMES_VENV" -eq 1 ]]; then
     echo "  Install Hermes first, or pass --hermes-venv PATH explicitly." >&2
   else
     echo "==> Installing hermes-cortex dependencies/CLI into Hermes Agent venv: $HERMES_AGENT_VENV"
-    "$HERMES_AGENT_VENV/bin/pip" install -e "$SCRIPT_DIR" -q 2>&1 | tail -3
+    if command -v uv >/dev/null 2>&1; then
+      uv pip install --python "$HERMES_AGENT_VENV/bin/python" -e "$SCRIPT_DIR" -q 2>&1 | tail -3
+    elif "$HERMES_AGENT_VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+      "$HERMES_AGENT_VENV/bin/python" -m pip install -e "$SCRIPT_DIR" -q 2>&1 | tail -3
+    else
+      echo "ERROR: Hermes Agent venv has no pip, and uv is not available on PATH." >&2
+      echo "  Install uv or bootstrap pip in: $HERMES_AGENT_VENV" >&2
+      exit 1
+    fi
 
     echo "==> Hermes venv ready. Runtime plugin loading now uses the Git checkout:"
     echo "    $HOME/.hermes/plugins/cortex"

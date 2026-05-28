@@ -67,6 +67,8 @@ cron:
     deliver: origin
     enabled_toolsets: [file, terminal]
     lookback_days: 2
+    state_db_path: /tmp/hermes-state.db
+    legacy_fallback_enabled: false
     session_globs:
       - ~/.hermes/sessions/*.jsonl
       - ~/.hermes/sessions/session_*.json
@@ -139,6 +141,8 @@ def test_load_full_config(cfg_file: Path) -> None:
     assert cfg.cron.nightly_promotion.deliver == "origin"
     assert cfg.cron.nightly_promotion.enabled_toolsets == ["file", "terminal"]
     assert cfg.cron.nightly_promotion.lookback_days == 2
+    assert cfg.cron.nightly_promotion.state_db_path == "/tmp/hermes-state.db"
+    assert cfg.cron.nightly_promotion.legacy_fallback_enabled is False
     assert cfg.cron.nightly_promotion.dry_run_first is False
     assert cfg.cron.weekly_review.name == "custom-weekly"
     assert cfg.cron.weekly_review.schedule == "30 8 * * 1"
@@ -205,6 +209,8 @@ def test_defaults_when_optional_sections_omitted(tmp_path: Path) -> None:
     assert cfg.cron.nightly_promotion.deliver == "origin"
     assert cfg.cron.nightly_promotion.enabled_toolsets == ["file", "terminal"]
     assert cfg.cron.nightly_promotion.lookback_days == 1
+    assert cfg.cron.nightly_promotion.state_db_path == "~/.hermes/state.db"
+    assert cfg.cron.nightly_promotion.legacy_fallback_enabled is True
     assert cfg.cron.nightly_promotion.session_globs == [
         "~/.hermes/sessions/*.jsonl",
         "~/.hermes/sessions/session_*.json",

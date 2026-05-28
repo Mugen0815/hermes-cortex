@@ -191,6 +191,8 @@ cron:
 
 `dry_run_first: true` (the default) makes the cron prompt include a `lifecycle nightly --dry-run` step before the `--write` apply step, so the LLM reviews what would be promoted before writing. Set to `false` to skip the dry run and go straight to apply. Both modes still run `lifecycle maintenance` (index → embed → graph) after writing.
 
+Nightly/session promotion is now SessionDB-primary on the ticket branch: the live contract reads `~/.hermes/state.db` first, falls back to legacy JSON/JSONL only under the documented failure/empty-source cases, ignores `request_dump_*.json`, and reports which backend won, how many sessions each source contributed, and why fallback was used. This repo-doc update describes the behavior; it does not perform a runtime plugin deploy.
+
 Use a private local config override for personal delivery targets, e.g. a Signal
 DM. Do not put user-specific/personal recipients into repo defaults, examples, or tests.
 `timezone` is used in the generated prompt and lookback wording. The Hermes cron

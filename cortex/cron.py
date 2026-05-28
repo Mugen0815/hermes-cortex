@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -59,7 +60,9 @@ Cortex CLI: {cortex_bin}
 ## Cron-Konfiguration
 - Lookback: letzte {lookback_days} Tag(e)
 - Lookback-/Prompt-Zeitzone: {timezone}
-- Session-Globs:
+- SessionDB primär: `{state_db_path}`
+- Legacy-Fallback aktiviert: {legacy_fallback_enabled}
+- Legacy-Session-Globs:
 {session_globs_block}
 
 Hinweis zur Zeitplanung: Die obige Zeitzone steuert diesen Prompt/Lookback. Die Ausführungszeit des Cron-Ausdrucks wird vom Hermes-Scheduler anhand der Hermes-Runtime-Konfiguration interpretiert.
@@ -125,13 +128,16 @@ Verwende niemals `status: active` für live Inbox-Kandidaten; live Inbox-Kandida
 
 ## Schritte
 
-1. **Sessions finden:** Durchsuche die konfigurierten Session-Globs nach Sessions im Lookback-Zeitraum ({timezone}):
-{session_globs_block}
-   - Ignoriere `request_dump_*.json`
-   - TUI/CLI-Sessions (`session_*.json`) sind standard JSON (Array von Objekten), lies mit `read_file`
-   - JSONL-Sessions (`*.jsonl`) enthalten ein JSON-Objekt pro Zeile
+1. **Sessions deterministisch laden:** Führe zuerst exakt diesen Befehl aus und nutze die JSON-Ausgabe als Session-Eingabe für die Analyse:
+   ```bash
+   {session_source_command}
+   ```
+   - Primär wird Hermes SessionDB (`state.db`) read-only gelesen.
+   - Legacy JSON/JSONL-Dateien sind nur Fallback, wenn `state.db` fehlt, unlesbar/schema-inkompatibel ist oder keine Sessions im Lookback enthält.
+   - Ignoriere `request_dump_*.json`; diese Dateien werden vom Loader gezählt, aber nie geparst.
+   - Nutze `diagnostics` im Loader-JSON für den finalen Report.
 
-2. **Analysiere** jede Session und extrahiere dauerhaft relevantes Wissen.
+2. **Analysiere** jede Session aus `sessions[]` und extrahiere dauerhaft relevantes Wissen.
 
 3. **Prüfe auf Duplikate:** Durchsuche das gesamte Vault (`find {vault_path} -name '*.md'`) nach existierenden Notes zum selben Thema. Falls bereits vorhanden: überspringe oder ergänze die existierende kanonische Note ohne Promotion-Flags.
 
@@ -151,6 +157,7 @@ Verwende niemals `status: active` für live Inbox-Kandidaten; live Inbox-Kandida
 🧠 Nightly Knowledge Promotion
 
 Sessions analysiert: N
+Quelle: backend=<state_db|legacy_files>, fallback=<true|false>, reason=<fallback_reason>, ignored_request_dump=<N>
 Kanonisch geschrieben: N | Notes in 00_inbox: N | aktualisiert: N | Duplikate übersprungen: N
 
 Neu/aktualisiert kanonisch:
@@ -175,6 +182,19 @@ Falls nur Chat-Noise ohne Dauerwert: antworte mit "[SILENT]"
 
 def _session_globs_block(session_globs: list[str]) -> str:
     return "\n".join(f"   - `{glob}`" for glob in session_globs)
+
+
+def _session_source_command(cfg: CronNightlyPromotionConfig) -> str:
+    parts = [
+        "python3 -m cortex.session_sources",
+        f"--lookback-days {cfg.lookback_days}",
+        f"--timezone {shlex.quote(cfg.timezone)}",
+        f"--state-db-path {shlex.quote(cfg.state_db_path)}",
+    ]
+    if not cfg.legacy_fallback_enabled:
+        parts.append("--no-legacy-fallback")
+    parts.extend(f"--session-glob {shlex.quote(glob)}" for glob in cfg.session_globs)
+    return " \\\n  ".join(parts)
 
 
 def _lifecycle_commands(cortex_bin: str, dry_run_first: bool) -> str:
@@ -318,7 +338,10 @@ def _build_job(
         cortex_bin=str(cortex_bin),
         lookback_days=cfg.lookback_days,
         timezone=cfg.timezone,
+        state_db_path=cfg.state_db_path,
+        legacy_fallback_enabled=cfg.legacy_fallback_enabled,
         session_globs_block=_session_globs_block(cfg.session_globs),
+        session_source_command=_session_source_command(cfg),
         lifecycle_commands=_lifecycle_commands(cortex_bin, cfg.dry_run_first),
     )
     job_id = _job_id(cfg.name)
@@ -355,6 +378,25 @@ def _build_job(
             "cortex": {
                 "repo": str(cortex_repo),
                 "lookback_days": cfg.lookback_days,
+                "session_source": {
+                    "state_db_path": cfg.state_db_path,
+                    "legacy_fallback_enabled": cfg.legacy_fallback_enabled,
+                    "diagnostics_expected": [
+                        "source_backend_primary",
+                        "state_db_path",
+                        "state_db_schema_version",
+                        "state_db_readable",
+                        "sessions_seen_by_backend",
+                        "sessions_selected",
+                        "sessions_selected_by_source",
+                        "messages_scanned",
+                        "fallback_used",
+                        "fallback_reason",
+                        "ignored_files.request_dump",
+                        "lookback_cutoff",
+                        "timezone",
+                    ],
+                },
                 "session_globs": list(cfg.session_globs),
                 "dry_run_first": cfg.dry_run_first,
                 "timezone": cfg.timezone,

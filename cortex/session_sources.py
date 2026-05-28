@@ -184,7 +184,8 @@ def _finalize_diagnostics(
     diagnostics.sessions_selected = len(sessions)
     by_source: dict[str, int] = {}
     for session in sessions:
-        by_source[session.source] = by_source.get(session.source, 0) + 1
+        session_source = session.metadata.get("session_source") or session.source
+        by_source[session_source] = by_source.get(session_source, 0) + 1
     diagnostics.sessions_selected_by_source = by_source
 
 

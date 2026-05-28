@@ -76,7 +76,8 @@ def test_state_db_primary_selects_recent_sessions_without_legacy_files(tmp_path:
     assert diag["state_db_schema_version"] == 7
     assert diag["sessions_seen_by_backend"]["state_db"] == 2
     assert diag["sessions_selected"] == 1
-    assert diag["sessions_selected_by_source"] == {"state_db": 1}
+    assert diag["sessions_selected_by_source"] == {"cli": 1}
+    assert result.sessions[0].metadata["session_source"] == "cli"
     assert diag["messages_scanned"] == 2
     assert diag["fallback_used"] is False
     assert diag["skipped"]["tool_or_non_chat_messages"] == 1

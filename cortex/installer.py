@@ -62,7 +62,11 @@ class InstallPlan:
     hermes_memory_path: Optional[Path] = DEFAULT_HERMES_MEMORY
     hermes_user_path: Optional[Path] = DEFAULT_HERMES_USER
     hermes_soul_path: Optional[Path] = DEFAULT_HERMES_SOUL
-    update_hermes_memory: bool = True
+    # Legacy Markdown mutation is explicit opt-in only. The paths above are
+    # config/context coordinates; their presence must not imply write access to
+    # Hermes' Markdown memory files.
+    update_hermes_memory: bool = False
+    update_hermes_soul_memory_rules: bool = False
 
     overwrite_policy: str = "ask"  # "ask" | "skip" | "force"
     dry_run: bool = False
@@ -132,7 +136,8 @@ class Installer:
         self._write_config()
         if p.update_hermes_memory:
             self._update_hermes_memory_coordinates()
-        self._update_hermes_soul_memory_rules()
+        if p.update_hermes_soul_memory_rules:
+            self._update_hermes_soul_memory_rules()
         self._enable_cortex_toolset()
         self._summary()
         return p
@@ -562,8 +567,12 @@ def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
 
     p.info("")
     plan.update_hermes_memory = p.confirm(
-        "Update MEMORY.md vault coordinates?",
-        default=bool(plan.hermes_memory_path),
+        "Legacy opt-in: update MEMORY.md vault coordinates?",
+        default=False,
+    )
+    plan.update_hermes_soul_memory_rules = p.confirm(
+        "Legacy opt-in: patch SOUL.md Memory Rules?",
+        default=False,
     )
 
     p.info("")

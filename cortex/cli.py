@@ -64,7 +64,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
             hermes_memory_path=DEFAULT_HERMES_MEMORY if DEFAULT_HERMES_MEMORY.exists() else None,
             hermes_user_path=DEFAULT_HERMES_USER if DEFAULT_HERMES_USER.exists() else None,
             hermes_soul_path=DEFAULT_HERMES_SOUL if DEFAULT_HERMES_SOUL.exists() else None,
-            update_hermes_memory=True,
+            update_hermes_memory=args.legacy_update_hermes_memory,
+            update_hermes_soul_memory_rules=args.legacy_update_soul_memory_rules,
             overwrite_policy="skip",
             dry_run=args.dry_run,
         )
@@ -626,6 +627,16 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     init.add_argument("--dry-run", action="store_true", help="Show actions without writing files")
     init.add_argument("--vault", type=str, help="Override vault path")
     init.add_argument("--config", type=str, help="Override config path")
+    init.add_argument(
+        "--legacy-update-hermes-memory",
+        action="store_true",
+        help="Legacy opt-in: update Hermes MEMORY.md vault coordinates",
+    )
+    init.add_argument(
+        "--legacy-update-soul-memory-rules",
+        action="store_true",
+        help="Legacy opt-in: patch SOUL.md with Cortex Memory Rules",
+    )
     init.set_defaults(func=_cmd_init)
 
     # index

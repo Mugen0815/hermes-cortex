@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -87,6 +90,12 @@ def test_run_writes_valid_config(plan: InstallPlan) -> None:
     assert "hermes_memory" in raw  # may be empty dict
 
 
+def test_default_install_plan_does_not_imply_markdown_mutation() -> None:
+    plan = InstallPlan()
+    assert plan.update_hermes_memory is False
+    assert plan.update_hermes_soul_memory_rules is False
+
+
 def test_run_with_hermes_memory_paths(tmp_path: Path) -> None:
     mem = tmp_path / "MEMORY.md"
     mem.write_text("x")
@@ -105,6 +114,63 @@ def test_run_with_hermes_memory_paths(tmp_path: Path) -> None:
     raw = yaml.safe_load(plan.config_path.read_text())
     assert raw["hermes_memory"]["memory_path"] == str(mem)
     assert "user_path" not in raw["hermes_memory"]
+
+
+def test_default_install_plan_does_not_mutate_hermes_markdown(tmp_path: Path) -> None:
+    mem = tmp_path / "MEMORY.md"
+    user = tmp_path / "USER.md"
+    soul = tmp_path / "SOUL.md"
+    originals = {
+        mem: "# Runtime\n\n- Obsidian vault: `/old`\n",
+        user: "# User\n\noriginal user\n",
+        soul: "# Soul\n\noriginal soul\n",
+    }
+    for path, content in originals.items():
+        path.write_text(content)
+        assert path.exists()
+
+    plan = InstallPlan(
+        vault_path=tmp_path / "vault",
+        config_path=tmp_path / "config.yaml",
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=mem,
+        hermes_user_path=user,
+        hermes_soul_path=soul,
+        overwrite_policy="force",
+    )
+
+    Installer(plan, prompt=FakePrompt([])).run()
+
+    for path, content in originals.items():
+        assert path.read_text() == content
+    assert not mem.with_suffix(".md.bak").exists()
+    assert not any("Update Hermes MEMORY.md" in a for a in plan.actions)
+    assert not any("Update SOUL.md" in a for a in plan.actions)
+    assert not any("path not configured or file not found" in a for a in plan.actions)
+
+
+def test_default_install_plan_keeps_soul_memory_rules_unchanged(tmp_path: Path) -> None:
+    soul = tmp_path / "SOUL.md"
+    original = "# Soul\n\nNo memory rules here yet.\n"
+    soul.write_text(original)
+
+    plan = InstallPlan(
+        vault_path=tmp_path / "vault",
+        config_path=tmp_path / "config.yaml",
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=soul,
+        overwrite_policy="force",
+    )
+
+    Installer(plan, prompt=FakePrompt([])).run()
+
+    assert soul.read_text() == original
+    assert "# Memory Rules" not in soul.read_text()
+    assert not any("Update SOUL.md" in a for a in plan.actions)
 
 
 def test_run_updates_hermes_memory_vault_coordinates(tmp_path: Path) -> None:
@@ -126,6 +192,7 @@ def test_run_updates_hermes_memory_vault_coordinates(tmp_path: Path) -> None:
         hermes_memory_path=mem,
         hermes_user_path=None,
         hermes_soul_path=None,
+        update_hermes_memory=True,
         overwrite_policy="force",
     )
 
@@ -152,6 +219,7 @@ def test_dry_run_does_not_update_hermes_memory(tmp_path: Path) -> None:
         hermes_memory_path=mem,
         hermes_user_path=None,
         hermes_soul_path=None,
+        update_hermes_memory=True,
         dry_run=True,
         overwrite_policy="force",
     )
@@ -160,6 +228,84 @@ def test_dry_run_does_not_update_hermes_memory(tmp_path: Path) -> None:
 
     assert mem.read_text() == original
     assert not mem.with_suffix(".md.bak").exists()
+
+
+def test_explicit_legacy_soul_memory_rules_opt_in(tmp_path: Path) -> None:
+    soul = tmp_path / "SOUL.md"
+    soul.write_text("# Soul\n\noriginal soul\n")
+    plan = InstallPlan(
+        vault_path=tmp_path / "vault",
+        config_path=tmp_path / "config.yaml",
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=soul,
+        update_hermes_soul_memory_rules=True,
+        overwrite_policy="force",
+    )
+
+    Installer(plan, prompt=FakePrompt([])).run()
+
+    updated = soul.read_text()
+    assert "# Memory Rules" in updated
+    assert str(plan.vault_path) in updated
+    assert any("Update SOUL.md with Memory Rules section" in a for a in plan.actions)
+
+
+def test_cli_init_yes_does_not_mutate_default_hermes_markdown(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    hermes_home = home / ".hermes"
+    memories = hermes_home / "memories"
+    memories.mkdir(parents=True)
+    soul = hermes_home / "SOUL.md"
+    mem = memories / "MEMORY.md"
+    user = memories / "USER.md"
+    originals = {
+        soul: "# Soul\n\noriginal soul\n",
+        mem: "# Runtime\n\n- Obsidian vault: `/old`\n",
+        user: "# User\n\noriginal user\n",
+    }
+    for path, content in originals.items():
+        path.write_text(content)
+        assert path.exists()
+
+    before = {path: path.read_bytes() for path in originals}
+    repo_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "HERMES_HOME": str(hermes_home),
+            "PYTHONPATH": str(repo_root),
+        }
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "cortex.cli",
+            "init",
+            "--yes",
+            "--vault",
+            str(tmp_path / "vault"),
+            "--config",
+            str(hermes_home / "cortex" / "config.yaml"),
+        ],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert all(path.read_bytes() == content for path, content in before.items())
+    assert "Update Hermes MEMORY.md" not in output
+    assert "Update SOUL.md" not in output
+    assert "path not configured or file not found" not in output
+    assert "hermes_memory:" in (hermes_home / "cortex" / "config.yaml").read_text()
 
 
 def test_dry_run_writes_nothing(plan: InstallPlan) -> None:
@@ -235,7 +381,8 @@ def test_build_plan_interactively_defaults(tmp_path: Path) -> None:
         "",               # MEMORY.md (default — probably won't exist)
         "",               # USER.md
         "",               # SOUL.md
-        "",               # update MEMORY.md vault coordinates? default follows MEMORY existence
+        "",               # legacy update MEMORY.md vault coordinates? default N
+        "",               # legacy patch SOUL.md Memory Rules? default N
         "",               # overwrite policy default ask
         "",               # proceed? default Y
     ]
@@ -254,7 +401,8 @@ def test_build_plan_abort(tmp_path: Path) -> None:
         str(tmp_path / "cfg.yaml"),
         "", "", "",
         "y",  # auto-detect
-        "",   # update MEMORY.md vault coordinates? default false in this fake env
+        "",   # legacy update MEMORY.md vault coordinates? default false
+        "",   # legacy patch SOUL.md Memory Rules? default false
         "",   # overwrite default
         "n",  # proceed? -> NO
     ]

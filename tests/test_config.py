@@ -193,15 +193,15 @@ def test_defaults_when_optional_sections_omitted(tmp_path: Path) -> None:
     )
     cfg = load_config(minimal)
     assert cfg.embeddings.model == "sentence-transformers/all-MiniLM-L6-v2"
-    assert cfg.search.top_k == 10
+    assert cfg.search.top_k == 20
     assert cfg.context_builder.token_budget == 4000
     assert cfg.context_builder.include_hermes_memory is False
     assert cfg.hermes_memory.memory_path is None
     assert cfg.hooks.cache_warm_enabled is False
-    assert cfg.hooks.context_injection_enabled is False
+    assert cfg.hooks.context_injection_enabled is True
     assert cfg.hooks.context_injection_budget == 1000
     assert cfg.hooks.context_injection_query == ""
-    assert cfg.hooks.load_skill is False
+    assert cfg.hooks.load_skill is True
     assert cfg.cron.nightly_promotion.enabled is False
     assert cfg.cron.nightly_promotion.name == "hermes-cortex-nightly-promotion"
     assert cfg.cron.nightly_promotion.schedule == "0 2 * * *"
@@ -297,7 +297,7 @@ def test_search_config_rejects_silly_traversal(tmp_path: Path) -> None:
 def test_search_config_accepts_sane_defaults(tmp_path: Path) -> None:
     p = _minimal_cfg(tmp_path)
     cfg = load_config(p)
-    assert cfg.search.top_k == 10
+    assert cfg.search.top_k == 20
     assert cfg.search.rrf_k == 60
     assert cfg.search.bm25_weight == 0.5
     assert cfg.search.vector_weight == 0.5
@@ -388,3 +388,171 @@ def test_weekly_cron_config_rejects_invalid_values(tmp_path: Path, overrides: st
     )
     with pytest.raises(ConfigError, match=match):
         load_config(p)
+
+
+# ---- P6 hook-context config -------------------------------------------------
+
+
+def _minimal_hooks_cfg(tmp_path: Path, extra: str) -> Path:
+    p = tmp_path / "hooks.yaml"
+    p.write_text(
+        f"vault: {{path: {tmp_path}}}\n"
+        f"index: {{chunks_path: {tmp_path}/c.jsonl, chroma_path: {tmp_path}/chroma}}\n"
+        f"{extra}\n"
+    )
+    return p
+
+
+def test_hook_context_defaults_when_omitted(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, ""))
+    assert cfg.search.top_k == 20
+    assert cfg.context_builder.include_hermes_memory is False
+    assert cfg.context_builder.include_static_files == []
+    assert cfg.hooks.skill_context.enabled is True
+    assert cfg.hooks.skill_context.load_skill is True
+    assert cfg.hooks.bootstrap_context.enabled is False
+    assert cfg.hooks.recent_context.enabled is False
+    assert cfg.hooks.dynamic_context.enabled is False
+    assert cfg.hooks.dynamic_context.query == ""
+    assert cfg.hooks.semantic_context_present is False
+    assert cfg.hooks.legacy_context_injection_present is False
+
+
+def test_semantic_hook_blocks_parse_static_files_and_sort(tmp_path: Path) -> None:
+    a = tmp_path / "a.md"
+    a.write_text("a")
+    b = tmp_path / "b.md"
+    b.write_text("b")
+    c = tmp_path / "c.md"
+    c.write_text("c")
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, f"""
+context_builder:
+  include_static_files:
+    - {{label: zeta, path: {c}, order: 30, max_bytes: 99}}
+hooks:
+  skill_context:
+    enabled: true
+    load_skill: true
+    budget: 321
+    skill_path: /tmp/custom-skill/SKILL.md
+    when: first_turn
+  bootstrap_context:
+    enabled: false
+    budget: 222
+    when: first_turn
+    include_static_files:
+      - {{label: beta, path: {b}, order: 20, budget: 10, optional: false}}
+      - {{label: alpha, path: {a}, order: 20, max_bytes: 20}}
+      - {{label: disabled, path: {c}, order: 1, enabled: false}}
+  recent_context:
+    enabled: false
+    budget: 333
+    source: session_summary
+  dynamic_context:
+    enabled: false
+    budget: 444
+    query: ""
+    when: each_turn
+"""))
+    assert cfg.hooks.semantic_context_present is True
+    assert cfg.hooks.skill_context.budget == 321
+    assert cfg.hooks.skill_context.skill_path == "/tmp/custom-skill/SKILL.md"
+    assert cfg.hooks.bootstrap_context.budget == 222
+    assert cfg.hooks.recent_context.source == "session_summary"
+    assert cfg.hooks.dynamic_context.query == ""
+    assert [e.label for e in cfg.hooks.bootstrap_context.include_static_files] == [
+        "disabled",
+        "alpha",
+        "beta",
+    ]
+    assert [e.label for e in cfg.hooks.ordered_static_files()] == ["alpha", "beta"]
+    assert cfg.hooks.bootstrap_context.include_static_files[1].max_bytes == 20
+    assert cfg.hooks.bootstrap_context.include_static_files[2].budget == 10
+    assert cfg.context_builder.include_static_files[0].label == "zeta"
+
+
+def test_legacy_context_injection_still_parses(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, """
+hooks:
+  context_injection:
+    enabled: true
+    budget: 1234
+    query: "legacy query"
+    load_skill: false
+    skill_path: /tmp/legacy/SKILL.md
+"""))
+    assert cfg.hooks.legacy_context_injection_present is True
+    assert cfg.hooks.semantic_context_present is False
+    assert cfg.hooks.context_injection_enabled is True
+    assert cfg.hooks.context_injection_budget == 1234
+    assert cfg.hooks.context_injection_query == "legacy query"
+    assert cfg.hooks.load_skill is False
+    assert cfg.hooks.skill_path == "/tmp/legacy/SKILL.md"
+
+
+def test_semantic_blocks_take_precedence_over_legacy_context_injection(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, """
+hooks:
+  context_injection:
+    enabled: true
+    budget: 9999
+    query: stale
+    load_skill: false
+    skill_path: /tmp/legacy/SKILL.md
+  skill_context:
+    enabled: true
+    load_skill: true
+    budget: 111
+    skill_path: /tmp/new/SKILL.md
+  dynamic_context:
+    enabled: false
+    query: ""
+    budget: 222
+"""))
+    assert cfg.hooks.semantic_context_present is True
+    assert cfg.hooks.legacy_context_injection_present is True
+    assert cfg.hooks.legacy_context_injection_deprecated is True
+    assert cfg.hooks.context_injection_enabled is True
+    assert cfg.hooks.context_injection_budget == 111
+    assert cfg.hooks.context_injection_query == ""
+    assert cfg.hooks.load_skill is True
+    assert cfg.hooks.skill_path == "/tmp/new/SKILL.md"
+
+
+def test_static_file_optional_missing_allowed_required_missing_raises(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.md"
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, f"""
+hooks:
+  bootstrap_context:
+    include_static_files:
+      - {{label: optional, path: {missing}, optional: true}}
+"""))
+    assert cfg.hooks.bootstrap_context.include_static_files[0].path == missing.resolve()
+
+    with pytest.raises(ConfigError, match="optional is false"):
+        load_config(_minimal_hooks_cfg(tmp_path, f"""
+hooks:
+  bootstrap_context:
+    include_static_files:
+      - {{label: required, path: {missing}, optional: false}}
+"""))
+
+
+@pytest.mark.parametrize(
+    ("entry", "match"),
+    [
+        ("{path: /tmp/x}", "label"),
+        ("{label: x}", "path"),
+        ("{label: x, path: /tmp/x, budget: 10, max_bytes: 20}", "only one"),
+        ("{label: x, path: /tmp/x, order: -1}", "order"),
+        ("{label: x, path: /tmp/x, budget: 0}", "budget"),
+    ],
+)
+def test_static_file_entries_reject_invalid_values(tmp_path: Path, entry: str, match: str) -> None:
+    with pytest.raises(ConfigError, match=match):
+        load_config(_minimal_hooks_cfg(tmp_path, f"""
+hooks:
+  bootstrap_context:
+    include_static_files:
+      - {entry}
+"""))

@@ -128,6 +128,17 @@ def test_run_writes_valid_config(plan: InstallPlan) -> None:
     assert raw["vault"]["path"] == str(plan.vault_path)
     assert raw["index"]["chroma_path"] == str(plan.chroma_path)
     assert raw["context_builder"]["include_hermes_memory"] is False
+    assert raw["context_builder"]["include_static_files"] == []
+    assert raw["search"]["top_k"] == 20
+    assert raw["hooks"]["skill_context"]["enabled"] is True
+    assert raw["hooks"]["bootstrap_context"]["enabled"] is False
+    assert raw["hooks"]["recent_context"]["enabled"] is False
+    assert raw["hooks"]["dynamic_context"]["enabled"] is False
+    assert raw["hooks"]["dynamic_context"]["query"] == ""
+    assert raw["hooks"]["context_injection"]["query"] == ""
+    assert raw["hooks"]["bootstrap_context"]["include_static_files"][0]["enabled"] is False
+    assert raw["hooks"]["bootstrap_context"]["include_static_files"][0]["label"] == "Hermes SOUL bootstrap"
+    assert "current projects, recent decisions, and active tasks" not in plan.config_path.read_text()
     assert raw["cron"]["nightly_promotion"]["deliver"] == "origin"
     assert raw["cron"]["nightly_promotion"]["session_globs"] == [
         "~/.hermes/sessions/*.jsonl",

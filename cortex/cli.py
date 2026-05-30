@@ -566,6 +566,27 @@ def _cmd_cron_status(args: argparse.Namespace) -> int:
 
 # ---- config/status ------------------------------------------------------------
 
+def _legacy_context_label(cfg) -> str:
+    suffix = " (deprecated/ignored)" if cfg.hooks.legacy_context_injection_deprecated else ""
+    return f"{cfg.hooks.legacy_context_injection_present}{suffix}"
+
+
+def _static_file_summary(entry) -> str:
+    source = str(entry.path) if entry.path is not None else "(missing path)"
+    bits = [
+        f"{entry.label}: enabled={entry.enabled}",
+        f"source={source}",
+        f"optional={entry.optional}",
+    ]
+    if entry.budget is not None:
+        bits.append(f"budget={entry.budget}")
+    if entry.max_bytes is not None:
+        bits.append(f"max_bytes={entry.max_bytes}")
+    if entry.enabled and entry.optional and (entry.path is None or not entry.path.exists()):
+        bits.append("skipped=optional file missing")
+    return "; ".join(bits)
+
+
 def _cmd_config_path(args: argparse.Namespace) -> int:
     from cortex.config import find_config
 
@@ -585,15 +606,28 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     print(f"Collection:      {cfg.index.collection}")
     print(f"Embeddings:      {cfg.embeddings.model} ({cfg.embeddings.device})")
     print(f"Cache warm:      {cfg.hooks.cache_warm_enabled}")
-    print(f"Skill context:   {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when})")
-    print(f"Bootstrap ctx:   {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when})")
-    print(f"Recent context:  {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.source})")
+    print(
+        f"Skill context:   {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when}); "
+        f"load_skill={cfg.hooks.skill_context.load_skill}; "
+        f"source={cfg.hooks.skill_context.skill_path or '(default profile skill path)'}; "
+        f"budget={cfg.hooks.skill_context.budget}"
+    )
+    print(
+        f"Bootstrap ctx:   {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when}); "
+        f"budget={cfg.hooks.bootstrap_context.budget}"
+    )
+    recent_skip = "; skipped=placeholder only" if cfg.hooks.recent_context.enabled else ""
+    print(
+        f"Recent context:  {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.when}); "
+        f"source={cfg.hooks.recent_context.source}{recent_skip}"
+    )
     print(f"Dynamic context: {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when})")
     print(f"Dynamic budget:  {cfg.hooks.dynamic_context.budget}")
     print(f"Dynamic query:   {cfg.hooks.dynamic_context.query or '(user message when enabled)'}")
     print(f"Static files:    {len(cfg.hooks.bootstrap_context.include_static_files)} configured")
-    print(f"Legacy context:  {cfg.hooks.legacy_context_injection_present}"
-          f"{' (deprecated/ignored)' if cfg.hooks.legacy_context_injection_deprecated else ''}")
+    for entry in cfg.hooks.bootstrap_context.include_static_files:
+        print(f"  - {_static_file_summary(entry)}")
+    print(f"Legacy context:  {_legacy_context_label(cfg)}")
     print(f"Runtime projection: {cfg.hooks.context_injection_enabled}")
     print(f"Load skill:      {cfg.hooks.load_skill}")
     print(f"Skill path:      {cfg.hooks.skill_path or '(default profile skill path)'}")
@@ -610,13 +644,28 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"  Chunks:         {cfg.index.chunks_path} ({'ok' if cfg.index.chunks_path.exists() else 'missing'})")
     print(f"  Chroma:         {cfg.index.chroma_path} ({'ok' if cfg.index.chroma_path.exists() else 'missing'})")
     print(f"  Cache warm:     {cfg.hooks.cache_warm_enabled}")
-    print(f"  Skill context:  {cfg.hooks.skill_context.enabled}")
-    print(f"  Bootstrap ctx:  {cfg.hooks.bootstrap_context.enabled}")
-    print(f"  Recent context: {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.source})")
-    print(f"  Dynamic ctx:    {cfg.hooks.dynamic_context.enabled}")
+    print(
+        f"  Skill context:  {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when}); "
+        f"source={cfg.hooks.skill_context.skill_path or '(default profile skill path)'}"
+    )
+    print(
+        f"  Bootstrap ctx:  {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when}); "
+        f"budget={cfg.hooks.bootstrap_context.budget}"
+    )
+    recent_skip = "; skipped=placeholder only" if cfg.hooks.recent_context.enabled else ""
+    print(
+        f"  Recent context: {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.when}); "
+        f"source={cfg.hooks.recent_context.source}{recent_skip}"
+    )
+    print(
+        f"  Dynamic ctx:    {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when}); "
+        f"query={cfg.hooks.dynamic_context.query or '(user message when enabled)'}; "
+        f"budget={cfg.hooks.dynamic_context.budget}"
+    )
     print(f"  Static files:   {len(cfg.hooks.bootstrap_context.include_static_files)} configured")
-    print(f"  Legacy context: {cfg.hooks.legacy_context_injection_present}"
-          f"{' (deprecated/ignored)' if cfg.hooks.legacy_context_injection_deprecated else ''}")
+    for entry in cfg.hooks.bootstrap_context.include_static_files:
+        print(f"    - {_static_file_summary(entry)}")
+    print(f"  Legacy context: {_legacy_context_label(cfg)}")
     print(f"  Load skill:     {cfg.hooks.load_skill}")
     return 0
 

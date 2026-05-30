@@ -19,9 +19,9 @@ stability: stable
 # Hermes Memory Files
 
 ## Summary
-Three files outside the vault hold runtime memory that Hermes injects into
-every session. `hermes-cortex` reads them as complementary context but does
-not index or modify them.
+Three files outside the vault hold runtime memory that Hermes can inject into
+sessions. `hermes-cortex` reads them as complementary context but does not
+index or modify them by default.
 
 ## Files
 
@@ -39,8 +39,11 @@ not index or modify them.
 
 ## Cortex Integration
 - `context.py` may prepend any/all of these to a context pack when relevant.
-- Configurable via `context_builder.include_hermes_memory` in `config.yaml`.
-- Missing files are skipped silently.
+- New configs prefer `hooks.bootstrap_context.include_static_files` for
+  deterministic bootstrap ordering and labels.
+- `context_builder.include_hermes_memory` remains a legacy compatibility switch
+  for older configs.
+- Missing files are only skipped when the corresponding include is optional.
 
 ## Related
 - [[Jarvis Memory Architecture]]

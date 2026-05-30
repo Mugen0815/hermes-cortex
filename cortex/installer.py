@@ -62,7 +62,11 @@ class InstallPlan:
     hermes_memory_path: Optional[Path] = DEFAULT_HERMES_MEMORY
     hermes_user_path: Optional[Path] = DEFAULT_HERMES_USER
     hermes_soul_path: Optional[Path] = DEFAULT_HERMES_SOUL
-    update_hermes_memory: bool = True
+    # Legacy Markdown mutation is explicit opt-in only. The paths above are
+    # config/context coordinates; their presence must not imply write access to
+    # Hermes' Markdown memory files.
+    update_hermes_memory: bool = False
+    update_hermes_soul_memory_rules: bool = False
 
     overwrite_policy: str = "ask"  # "ask" | "skip" | "force"
     dry_run: bool = False
@@ -132,7 +136,8 @@ class Installer:
         self._write_config()
         if p.update_hermes_memory:
             self._update_hermes_memory_coordinates()
-        self._update_hermes_soul_memory_rules()
+        if p.update_hermes_soul_memory_rules:
+            self._update_hermes_soul_memory_rules()
         self._enable_cortex_toolset()
         self._summary()
         return p
@@ -168,6 +173,10 @@ class Installer:
     def _copy_seed_notes(self) -> None:
         seed_notes = _seed_root() / "notes"
         for src in seed_notes.rglob("*.md"):
+            # Folder READMEs document the seed package layout; they are not vault
+            # notes and may intentionally omit note frontmatter.
+            if src.name == "README.md":
+                continue
             rel = src.relative_to(seed_notes)
             dst = self.plan.vault_path / rel
             self._copy_file(src, dst)
@@ -422,7 +431,7 @@ embeddings:
   device: auto
 
 search:
-  top_k: 10
+  top_k: 20
   bm25_weight: 0.5
   vector_weight: 0.5
   rrf_k: 60
@@ -434,6 +443,7 @@ context_builder:
   token_budget: 4000
   cite_sources: true
   include_hermes_memory: false
+  include_static_files: []
 
 cron:
   nightly_promotion:
@@ -454,12 +464,51 @@ cron:
 hooks:
   cache_warm:
     enabled: false
+  skill_context:
+    enabled: true
+    when: each_turn
+    load_skill: true
+    skill_path: ""
+    budget: 1000
+  bootstrap_context:
+    enabled: false
+    when: first_turn
+    budget: 1000
+    include_static_files:
+      - enabled: false
+        label: Hermes SOUL bootstrap
+        path: ~/.hermes/SOUL.md
+        order: 10
+        max_bytes: 12000
+        optional: true
+      - enabled: false
+        label: Hermes MEMORY bootstrap
+        path: ~/.hermes/memories/MEMORY.md
+        order: 20
+        max_bytes: 8000
+        optional: true
+      - enabled: false
+        label: Hermes USER bootstrap
+        path: ~/.hermes/memories/USER.md
+        order: 30
+        max_bytes: 8000
+        optional: true
+  recent_context:
+    enabled: false
+    when: first_turn
+    source: disabled_placeholder
+    budget: 1000
+  dynamic_context:
+    enabled: false
+    when: each_turn
+    budget: 1000
+    query: ""
   context_injection:
     enabled: false
     load_skill: false
     skill_path: ""
     budget: 1000
-    query: "current projects, recent decisions, and active tasks"
+    query: ""
 
 logging:
   level: INFO
@@ -562,8 +611,12 @@ def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
 
     p.info("")
     plan.update_hermes_memory = p.confirm(
-        "Update MEMORY.md vault coordinates?",
-        default=bool(plan.hermes_memory_path),
+        "Legacy opt-in: update MEMORY.md vault coordinates?",
+        default=False,
+    )
+    plan.update_hermes_soul_memory_rules = p.confirm(
+        "Legacy opt-in: patch SOUL.md Memory Rules?",
+        default=False,
     )
 
     p.info("")

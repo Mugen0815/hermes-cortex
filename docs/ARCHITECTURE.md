@@ -78,9 +78,23 @@ Cortex distinguishes between indexed vault knowledge and Hermes runtime memory.
 | `~/.hermes/memories/USER.md` | No | User preferences/profile |
 | `~/.hermes/SOUL.md` | No | Agent persona/rules |
 
-The vault is embedded and searched. Hermes memory files may be included by the
-context builder as extra prompt context, but they are not copied into the vault
-or vector store.
+The vault is embedded and searched. Hermes memory files may be included as
+static bootstrap context via `hooks.bootstrap_context.include_static_files`
+(preferred) or the legacy `context_builder.include_hermes_memory` switch. They
+are read as context only; they are not copied into the vault or vector store.
+
+Runtime hook context is split semantically:
+
+- `skill_context` — each-turn runtime rules and skill bootstrap
+- `bootstrap_context` — first-turn static context, including deterministic
+  `include_static_files`
+- `recent_context` — disabled placeholder in this cutover; no SessionDB/topic
+  condenser here
+- `dynamic_context` — gated/off-by-default user-message Vault context
+
+New semantic blocks take precedence over the legacy `hooks.context_injection`
+block. Legacy configs still parse for compatibility, but they are treated as a
+fallback path, not the primary model.
 
 ## Nightly/session promotion
 

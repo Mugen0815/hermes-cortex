@@ -19,8 +19,9 @@ vault:
     - 00_inbox
     - 80_templates
 
-# Hermes memory files: read as complementary context, NOT indexed into the vault.
-# If a path is missing, cortex skips it silently.
+# Hermes memory file coordinates are read-only context inputs. New hook configs
+# should prefer hooks.bootstrap_context.include_static_files over the legacy
+# context_builder.include_hermes_memory switch.
 hermes_memory:
   memory_path: ~/.hermes/memories/MEMORY.md
   user_path: ~/.hermes/memories/USER.md
@@ -36,7 +37,7 @@ embeddings:
   device: auto  # 'auto' picks cuda > mps > cpu; or set 'cpu', 'cuda', 'mps'
 
 search:
-  top_k: 10
+  top_k: 20
   bm25_weight: 0.5
   vector_weight: 0.5
   rrf_k: 60
@@ -52,7 +53,8 @@ search:
 context_builder:
   token_budget: 4000
   cite_sources: true
-  include_hermes_memory: false  # opt in to prepend MEMORY.md/USER.md/SOUL.md to context
+  include_hermes_memory: false  # legacy compatibility; prefer include_static_files below
+  include_static_files: []      # parsed/sorted; runtime consumption lands in the hook split slice
 
 # Cortex-managed Hermes cron jobs.
 # Public-safe defaults keep jobs disabled; set enabled: true in your private config.
@@ -88,19 +90,71 @@ cron:
     stale_min_importance: 4.0
     consolidation_min_degree: 3
 
-# Hermes lifecycle hooks — each hook can be enabled independently.
+# Hermes lifecycle hooks. The semantic blocks below supersede the legacy
+# hooks.context_injection block for new configs. If both are present, semantic
+# blocks take precedence and context_injection is treated as deprecated fallback.
 hooks:
   # on_session_start: warms the search/cache state for normal chat sessions.
   cache_warm:
     enabled: false
 
-  # pre_llm_call: injects vault context, and optionally the memory-query-flow skill.
+  # Runtime rules/skill context. Compact, stable, and safe for every turn.
+  skill_context:
+    enabled: true
+    when: each_turn
+    load_skill: true
+    skill_path: ""  # empty → $HERMES_HOME/skills/long-term-memory/memory-query-flow/SKILL.md
+    budget: 1000
+
+  # First-turn/bootstrap-only static context. Entries are deterministic by
+  # order, then label, then path. Missing optional files are skipped by runtime;
+  # missing required files should be surfaced as hard diagnostics by the runtime slice.
+  bootstrap_context:
+    enabled: false
+    when: first_turn
+    budget: 1000
+    include_static_files:
+      - enabled: false
+        label: Hermes SOUL bootstrap
+        path: ~/.hermes/SOUL.md
+        order: 10
+        max_bytes: 12000
+        optional: true
+      - enabled: false
+        label: Hermes MEMORY bootstrap
+        path: ~/.hermes/memories/MEMORY.md
+        order: 20
+        max_bytes: 8000
+        optional: true
+      - enabled: false
+        label: Hermes USER bootstrap
+        path: ~/.hermes/memories/USER.md
+        order: 30
+        max_bytes: 8000
+        optional: true
+
+  # Placeholder only in this slice. Do not wire SessionDB/query/topic condenser here.
+  recent_context:
+    enabled: false
+    when: first_turn
+    source: disabled_placeholder
+    budget: 1000
+
+  # Dynamic user-message Vault context. Gated/off by default; empty query means
+  # runtime may derive from the current user message only when this block is enabled.
+  dynamic_context:
+    enabled: false
+    when: each_turn
+    budget: 1000
+    query: ""
+
+  # Legacy compatibility only. Prefer the semantic blocks above.
   context_injection:
     enabled: false
     budget: 1000
-    query: "current projects, recent decisions, and active tasks"
+    query: ""
     load_skill: false
-    skill_path: ""         # empty → $HERMES_HOME/skills/long-term-memory/memory-query-flow/SKILL.md
+    skill_path: ""
 
 logging:
   level: INFO

@@ -16,6 +16,7 @@ import os
 from typing import Any
 
 from cortex.config import _hermes_home
+from cortex.text import estimate_tokens
 
 from cortex.plugin import (
     CortexToolError,
@@ -158,6 +159,7 @@ def _load_hooks_config() -> dict[str, Any]:
         cfg = load_config(_config_path())
         h = cfg.hooks
         return {
+            "hooks": h,
             "cache_warm_enabled": h.cache_warm_enabled,
             "context_injection_enabled": h.context_injection_enabled,
             "budget": h.context_injection_budget,
@@ -168,6 +170,7 @@ def _load_hooks_config() -> dict[str, Any]:
     except Exception as exc:
         _log.warning("Failed to load hooks config: %s", exc)
         return {
+            "hooks": None,
             "cache_warm_enabled": False,
             "context_injection_enabled": False,
             "budget": 1000,
@@ -243,6 +246,142 @@ def _load_skill_content(skill_path: str) -> str | None:
         return None
 
 
+def _truncate_utf8_bytes(text: str, max_bytes: int) -> tuple[str, bool]:
+    raw = text.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return text, False
+    return raw[:max_bytes].decode("utf-8", errors="ignore").rstrip(), True
+
+
+def _truncate_token_budget(text: str, budget: int) -> tuple[str, bool]:
+    if estimate_tokens(text) <= budget:
+        return text, False
+    # estimate_tokens is char based, so this keeps the rendered text under the
+    # requested approximate token budget without pulling in a tokenizer.
+    limit = max(1, budget * 4)
+    while limit > 1 and estimate_tokens(text[:limit]) > budget:
+        limit -= max(1, limit // 10)
+    return text[:limit].rstrip(), True
+
+
+def _diagnostic(message: str) -> str:
+    return f"[cortex hook diagnostic: {message}]"
+
+
+def _render_static_files(hooks: Any) -> list[str]:
+    parts: list[str] = []
+    tokens_used = 0
+    total_budget = int(getattr(hooks.bootstrap_context, "budget", 0) or 0)
+    for entry in hooks.ordered_static_files():
+        label = entry.label
+        path = entry.path
+        source = str(path) if path is not None else "(missing path)"
+        if path is None or not path.exists() or not path.is_file():
+            if entry.optional:
+                parts.append(_diagnostic(
+                    f"skipped static file {label!r} from {source}: optional file missing"
+                ))
+            continue
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            parts.append(_diagnostic(
+                f"skipped static file {label!r} from {source}: read failed: {exc}"
+            ))
+            continue
+        if not text:
+            parts.append(_diagnostic(
+                f"skipped static file {label!r} from {source}: file is empty"
+            ))
+            continue
+
+        notes: list[str] = []
+        if entry.max_bytes is not None:
+            text, truncated = _truncate_utf8_bytes(text, int(entry.max_bytes))
+            if truncated:
+                notes.append(f"truncated to max_bytes={entry.max_bytes}")
+        if entry.budget is not None:
+            text, truncated = _truncate_token_budget(text, int(entry.budget))
+            if truncated:
+                notes.append(f"truncated to budget={entry.budget}")
+        if total_budget > 0:
+            remaining = total_budget - tokens_used
+            if remaining <= 0:
+                parts.append(_diagnostic(
+                    f"skipped static file {label!r} from {source}: bootstrap budget exhausted"
+                ))
+                continue
+            text, truncated = _truncate_token_budget(text, remaining)
+            if truncated:
+                notes.append(f"truncated to remaining bootstrap budget={remaining}")
+        cost = estimate_tokens(text)
+        tokens_used += cost
+
+        meta = f"label={label}; source={source}"
+        if entry.max_bytes is not None:
+            meta += f"; max_bytes={entry.max_bytes}"
+        if entry.budget is not None:
+            meta += f"; budget={entry.budget}"
+        if notes:
+            meta += f"; {'; '.join(notes)}"
+        parts.append(f"## Static Context: {label}\nSource: {source}\n{meta}\n\n{text}")
+    return parts
+
+
+def _pre_llm_call_semantic(hooks: Any, user_message: str, is_first_turn: bool) -> str | None:
+    parts: list[str] = []
+
+    skill = hooks.skill_context
+    if skill.enabled and skill.load_skill:
+        skill_text = _load_skill_content(skill.skill_path)
+        if skill_text:
+            parts.append(skill_text)
+        else:
+            parts.append(_diagnostic(
+                f"skipped skill_context: skill unavailable at {skill.skill_path or _DEFAULT_SKILL_PATH}"
+            ))
+
+    bootstrap = hooks.bootstrap_context
+    if bootstrap.enabled and is_first_turn:
+        parts.extend(_render_static_files(hooks))
+    elif bootstrap.enabled and not is_first_turn:
+        _log.debug("Bootstrap context skipped after first turn")
+
+    recent = hooks.recent_context
+    if recent.enabled:
+        parts.append(_diagnostic(
+            "skipped recent_context: disabled placeholder; SessionDB recent-context query is not implemented"
+        ))
+
+    dynamic = hooks.dynamic_context
+    if dynamic.enabled:
+        query = dynamic.query.strip() or user_message.strip()
+        if query:
+            budget = int(dynamic.budget)
+            if budget > 0:
+                try:
+                    result = _vault_build_context(
+                        query=query,
+                        budget=budget,
+                        config_path=_config_path(),
+                    )
+                    text = (result or {}).get("text", "").strip()
+                    if text:
+                        parts.append(f"[Vault context from hermes-cortex]\n{text}")
+                        _log.info(
+                            "Injected %d tokens of vault context (budget=%d)",
+                            (result or {}).get("tokens_used", 0),
+                            budget,
+                        )
+                except Exception as exc:
+                    _log.warning("Context injection failed: %s", exc)
+                    parts.append(_diagnostic(f"skipped dynamic_context: {exc}"))
+        else:
+            parts.append(_diagnostic("skipped dynamic_context: empty query"))
+
+    return "\n\n".join(parts) if parts else None
+
+
 def _pre_llm_call(
     session_id: str = "",
     user_message: str = "",
@@ -264,6 +403,13 @@ def _pre_llm_call(
     or per-task assignment (``kanban_create(skills=[...])``).
     """
     cfg = _HOOK_CONFIG_CACHE.get("config") or _load_hooks_config()
+    hooks = cfg.get("hooks")
+    if hooks is not None and (
+        getattr(hooks, "semantic_context_present", False)
+        or not getattr(hooks, "legacy_context_injection_present", False)
+    ):
+        return _pre_llm_call_semantic(hooks, user_message, is_first_turn)
+
     if not cfg.get("context_injection_enabled"):
         return None
 

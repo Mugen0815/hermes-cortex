@@ -106,6 +106,7 @@ def test_runtime_plugin_cli_uses_full_cortex_parser_surface() -> None:
         "config",
         "status",
         "lifecycle",
+        "session-sources",
         "cron",
         "reset",
     }

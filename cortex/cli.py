@@ -23,6 +23,7 @@ Subcommands:
     cortex lifecycle maintenance [--force] [--dry-run]
     cortex lifecycle nightly [--dry-run]
     cortex lifecycle weekly [--dry-run]
+    cortex session-sources [--lookback-days N] [--timezone TZ] [--state-db-path PATH] [--session-glob GLOB] [--no-legacy-fallback]
     cortex reset   [--config PATH] [--chroma | --chunks | --all] [--yes]
 """
 
@@ -440,6 +441,29 @@ def _cmd_lifecycle_weekly(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+# ---- session sources ---------------------------------------------------------
+
+
+def _cmd_session_sources(args: argparse.Namespace) -> int:
+    """Print recent Hermes sessions as JSON for cron/promotions.
+
+    Exposed through ``hermes cortex`` so packaged cron prompts do not depend on
+    a bare ``cortex`` console script or ``PYTHONPATH`` being present in the
+    scheduler's agent shell.
+    """
+    from cortex.session_sources import _DEFAULT_SESSION_GLOBS, collect_recent_sessions
+
+    result = collect_recent_sessions(
+        lookback_days=getattr(args, "lookback_days", 1),
+        timezone=getattr(args, "timezone", "Europe/Berlin"),
+        state_db_path=getattr(args, "state_db_path", "~/.hermes/state.db"),
+        session_globs=getattr(args, "session_globs", None) or _DEFAULT_SESSION_GLOBS,
+        legacy_fallback_enabled=not getattr(args, "no_legacy_fallback", False),
+    )
+    print_json(result.as_dict())
+    return 0
+
+
 # ---- cron --------------------------------------------------------------------
 
 
@@ -731,6 +755,18 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     lc_weekly.set_defaults(func=_cmd_lifecycle_weekly)
 
     lc.set_defaults(func=_cmd_lifecycle_dispatch)
+
+    # session-sources
+    ss = sub.add_parser(
+        "session-sources",
+        help="Collect recent Hermes sessions from SessionDB with legacy file fallback",
+    )
+    ss.add_argument("--lookback-days", type=int, default=1)
+    ss.add_argument("--timezone", default="Europe/Berlin")
+    ss.add_argument("--state-db-path", default="~/.hermes/state.db")
+    ss.add_argument("--session-glob", action="append", dest="session_globs", default=[])
+    ss.add_argument("--no-legacy-fallback", action="store_true")
+    ss.set_defaults(func=_cmd_session_sources)
 
     # cron
     cr = sub.add_parser("cron", help="Manage Hermes cortex cron jobs (install/uninstall/status)")

@@ -186,7 +186,7 @@ def _session_globs_block(session_globs: list[str]) -> str:
 
 def _session_source_command(cfg: CronNightlyPromotionConfig) -> str:
     parts = [
-        "python3 -m cortex.session_sources",
+        "hermes cortex session-sources",
         f"--lookback-days {cfg.lookback_days}",
         f"--timezone {shlex.quote(cfg.timezone)}",
         f"--state-db-path {shlex.quote(cfg.state_db_path)}",
@@ -507,7 +507,7 @@ def _install_nightly(cortex_cfg: Any, vault_path: str | None = None) -> dict[str
 
     vault = Path(vault_path) if vault_path else cortex_cfg.vault.path
     cortex_repo = Path(__file__).resolve().parents[1]
-    cortex_bin = "cortex"
+    cortex_bin = "hermes cortex"
 
     job = _build_job(str(vault), str(cortex_repo), cortex_bin, cfg)
     return _upsert_job(job, cfg, _find_job_indices, job_name="nightly")
@@ -528,7 +528,7 @@ def _install_weekly(cortex_cfg: Any, vault_path: str | None = None) -> dict[str,
 
     vault = Path(vault_path) if vault_path else cortex_cfg.vault.path
     cortex_repo = Path(__file__).resolve().parents[1]
-    cortex_bin = "cortex"
+    cortex_bin = "hermes cortex"
 
     job = _build_weekly_job(str(vault), str(cortex_repo), cortex_bin, cfg)
     return _upsert_job(job, cfg, _find_weekly_job_indices, job_name="weekly")

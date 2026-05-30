@@ -22,19 +22,19 @@ def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
     prompt = _NIGHTLY_PROMPT.format(
         vault_path="/vault",
         cortex_repo="/repo",
-        cortex_bin="cortex",
+        cortex_bin="hermes cortex",
         lookback_days=1,
         timezone="Europe/Berlin",
         state_db_path="~/.hermes/state.db",
         legacy_fallback_enabled=True,
         session_globs_block="   - `~/.hermes/sessions/*.jsonl`\n   - `~/.hermes/sessions/session_*.json`",
         session_source_command=(
-            "python3 -m cortex.session_sources --lookback-days 1 --timezone Europe/Berlin "
+            "hermes cortex session-sources --lookback-days 1 --timezone Europe/Berlin "
             "--state-db-path ~/.hermes/state.db --session-glob ~/.hermes/sessions/*.jsonl "
             "--session-glob ~/.hermes/sessions/session_*.json"
         ),
         lifecycle_commands=(
-            "cortex lifecycle nightly --dry-run && \\\n   cortex lifecycle nightly --write && \\\n   cortex lifecycle maintenance"
+            "hermes cortex lifecycle nightly --dry-run && \\\n   hermes cortex lifecycle nightly --write && \\\n   hermes cortex lifecycle maintenance"
         ),
     )
 
@@ -53,49 +53,50 @@ def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
     assert "*.jsonl" in prompt
     assert "session_*.json" in prompt
     assert "request_dump_*.json" in prompt
-    assert "python3 -m cortex.session_sources" in prompt
+    assert "hermes cortex session-sources" in prompt
     assert "SessionDB primär" in prompt
     assert "Quelle: backend=<state_db|legacy_files>" in prompt
     assert "/private/dev/hermes-cortex/.venv/bin/cortex" not in prompt
 
 
 def test_lifecycle_commands_apply_with_write_after_optional_dry_run():
-    commands = _lifecycle_commands("cortex", dry_run_first=True)
+    commands = _lifecycle_commands("hermes cortex", dry_run_first=True)
 
     assert commands == (
-        "cortex lifecycle nightly --dry-run && \\\n   cortex lifecycle nightly --write && \\\n   cortex lifecycle maintenance"
+        "hermes cortex lifecycle nightly --dry-run && \\\n   hermes cortex lifecycle nightly --write && \\\n   hermes cortex lifecycle maintenance"
     )
     assert commands.count("--dry-run") == 1
     assert commands.count("--write") == 1
 
 
 def test_lifecycle_commands_apply_with_write_without_dry_run_first():
-    commands = _lifecycle_commands("cortex", dry_run_first=False)
+    commands = _lifecycle_commands("hermes cortex", dry_run_first=False)
 
     assert commands == (
-        "cortex lifecycle nightly --write && \\\n   cortex lifecycle maintenance"
+        "hermes cortex lifecycle nightly --write && \\\n   hermes cortex lifecycle maintenance"
     )
     assert "--dry-run" not in commands
     assert commands.count("--write") == 1
 
 
 def test_build_job_uses_runtime_cli_without_stale_hardcoded_path():
-    job = _build_job("/vault", "/repo", "cortex")
+    job = _build_job("/vault", "/repo", "hermes cortex")
 
-    assert "cortex lifecycle nightly --dry-run" in job["prompt"]
-    assert "cortex lifecycle nightly --write" in job["prompt"]
+    assert "hermes cortex lifecycle nightly --dry-run" in job["prompt"]
+    assert "hermes cortex lifecycle nightly --write" in job["prompt"]
     assert "/private/dev/hermes-cortex/.venv/bin/cortex" not in job["prompt"]
+    assert "python3 -m cortex.session_sources" not in job["prompt"]
 
 
 def test_build_job_uses_default_public_safe_config():
-    job = _build_job("/vault", "/repo", "cortex")
+    job = _build_job("/vault", "/repo", "hermes cortex")
 
     assert job["name"] == "hermes-cortex-nightly-promotion"
     assert job["schedule_display"] == "0 2 * * *"
     assert job["deliver"] == "origin"
     assert job["enabled_toolsets"] == ["file", "terminal"]
     assert "~/.hermes/state.db" in job["prompt"]
-    assert "python3 -m cortex.session_sources" in job["prompt"]
+    assert "hermes cortex session-sources" in job["prompt"]
     assert "~/.hermes/sessions/*.jsonl" in job["prompt"]
     assert "~/.hermes/sessions/session_*.json" in job["prompt"]
     assert job["metadata"]["cortex"]["session_source"]["state_db_path"] == "~/.hermes/state.db"
@@ -120,7 +121,7 @@ def test_build_job_uses_custom_config_values():
         dry_run_first=False,
     )
 
-    job = _build_job("/vault", "/repo", "cortex", cfg)
+    job = _build_job("/vault", "/repo", "hermes cortex", cfg)
 
     assert job["id"] == _job_id("custom-nightly")
     assert job["name"] == "custom-nightly"
@@ -149,7 +150,7 @@ def test_session_source_command_includes_state_db_and_legacy_controls():
 
     command = _session_source_command(cfg)
 
-    assert "python3 -m cortex.session_sources" in command
+    assert "hermes cortex session-sources" in command
     assert "--lookback-days 2" in command
     assert "--timezone UTC" in command
     assert "--state-db-path /tmp/state.db" in command
@@ -190,7 +191,7 @@ def test_install_uses_runtime_cortex_cli(monkeypatch, tmp_path):
     result = install(vault_path=str(tmp_path / "vault"))
 
     assert result["action"] == "created"
-    assert captured["cortex_bin"] == "cortex"
+    assert captured["cortex_bin"] == "hermes cortex"
     assert captured["cortex_repo"]
     assert not captured["cortex_bin"].startswith("/private/dev/hermes-cortex")
     assert captured["cron_config"].deliver == "origin"
@@ -368,19 +369,19 @@ def test_install_disabled_config_skips_creation(monkeypatch):
 
 def test_weekly_lifecycle_command_respects_dry_run_true_false():
     cfg = CronWeeklyReviewConfig(dry_run=True)
-    command = _weekly_lifecycle_command("cortex", cfg)
+    command = _weekly_lifecycle_command("hermes cortex", cfg)
     assert command == (
-        "cortex lifecycle weekly --dry-run --stale-days 180 "
+        "hermes cortex lifecycle weekly --dry-run --stale-days 180 "
         "--stale-min-importance 4.0 --consolidation-min-degree 3"
     )
 
-    no_dry_run = _weekly_lifecycle_command("cortex", CronWeeklyReviewConfig(dry_run=False))
+    no_dry_run = _weekly_lifecycle_command("hermes cortex", CronWeeklyReviewConfig(dry_run=False))
     assert "--dry-run" not in no_dry_run
-    assert no_dry_run.startswith("cortex lifecycle weekly --stale-days")
+    assert no_dry_run.startswith("hermes cortex lifecycle weekly --stale-days")
 
 
 def test_build_weekly_job_uses_default_public_safe_config():
-    job = _build_weekly_job("/vault", "/repo", "cortex")
+    job = _build_weekly_job("/vault", "/repo", "hermes cortex")
 
     assert job["id"] == _job_id("hermes-cortex-weekly-review")
     assert job["name"] == "hermes-cortex-weekly-review"
@@ -389,7 +390,7 @@ def test_build_weekly_job_uses_default_public_safe_config():
     assert job["metadata"]["cortex"]["job_type"] == "weekly_review"
     assert job["metadata"]["cortex"]["output_format"] == "markdown"
     assert job["metadata"]["cortex"]["read_only"] is True
-    assert "cortex lifecycle weekly --dry-run" in job["prompt"]
+    assert "hermes cortex lifecycle weekly --dry-run" in job["prompt"]
 
 
 def test_build_weekly_job_uses_custom_config_values():
@@ -405,7 +406,7 @@ def test_build_weekly_job_uses_custom_config_values():
         consolidation_min_degree=5,
     )
 
-    job = _build_weekly_job("/vault", "/repo", "cortex", cfg)
+    job = _build_weekly_job("/vault", "/repo", "hermes cortex", cfg)
 
     assert job["id"] == _job_id("custom-weekly")
     assert job["schedule_display"] == "30 7 * * 1"
@@ -453,7 +454,7 @@ def test_install_weekly_uses_weekly_config(monkeypatch, tmp_path):
 
     assert result["job"] == "weekly"
     assert result["action"] == "created"
-    assert captured["cortex_bin"] == "cortex"
+    assert captured["cortex_bin"] == "hermes cortex"
     assert captured["cron_config"] is weekly_cfg
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -10,6 +11,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cortex.config import load_config
+from cortex.frontmatter_validator import validate_frontmatter
+from cortex.graph_index import build_graph
+from cortex.indexer import index_vault
 from cortex.installer import (
     InstallPlan,
     Installer,
@@ -72,7 +77,49 @@ def test_run_installs_seed_notes(plan: InstallPlan) -> None:
     Installer(plan, prompt=FakePrompt([])).run()
     assert (plan.vault_path / "10_facts" / "Vault Schema.md").exists()
     assert (plan.vault_path / "60_maps" / "Map - Jarvis Knowledge Index.md").exists()
+    assert not (plan.vault_path / "60_maps" / "README.md").exists()
     assert (plan.vault_path / "30_projects" / "Project - hermes-cortex.md").exists()
+
+
+def test_seeded_vault_is_frontmatter_index_and_graph_clean(plan: InstallPlan) -> None:
+    Installer(plan, prompt=FakePrompt([])).run()
+    cfg = load_config(plan.config_path)
+
+    fm_report = validate_frontmatter(cfg)
+    assert fm_report.error_count == 0
+    assert fm_report.warning_count == 0
+
+    index_report = index_vault(cfg, force=True)
+    assert index_report.notes_missing_frontmatter == []
+    assert index_report.notes_invalid_frontmatter == []
+    assert index_report.notes_with_warnings == []
+    assert index_report.errors == []
+
+    chunk_files = {
+        json.loads(line)["file"]
+        for line in plan.chunks_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    assert "60_maps/README.md" not in chunk_files
+
+    graph_report = build_graph(cfg, force=True)
+    assert graph_report.broken == 0
+    broken_path = plan.chunks_path.parent / "graph" / "graph_broken.jsonl"
+    assert broken_path.read_text(encoding="utf-8").strip() == ""
+
+    seed_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (plan.vault_path / "60_maps").glob("*.md")
+    )
+    for private_target in (
+        "[[Alpha Workstation]]",
+        "[[Jarvis VM]]",
+        "[[Obsidian Vault]]",
+        "[[Skynet Host]]",
+        "[[Project - Jarvis Homebase]]",
+        "[[Runbook - Promote session knowledge]]",
+    ):
+        assert private_target not in seed_text
 
 
 def test_run_writes_valid_config(plan: InstallPlan) -> None:

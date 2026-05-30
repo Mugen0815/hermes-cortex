@@ -431,7 +431,7 @@ embeddings:
   device: auto
 
 search:
-  top_k: 10
+  top_k: 20
   bm25_weight: 0.5
   vector_weight: 0.5
   rrf_k: 60
@@ -443,6 +443,7 @@ context_builder:
   token_budget: 4000
   cite_sources: true
   include_hermes_memory: false
+  include_static_files: []
 
 cron:
   nightly_promotion:
@@ -463,12 +464,51 @@ cron:
 hooks:
   cache_warm:
     enabled: false
+  skill_context:
+    enabled: true
+    when: each_turn
+    load_skill: true
+    skill_path: ""
+    budget: 1000
+  bootstrap_context:
+    enabled: false
+    when: first_turn
+    budget: 1000
+    include_static_files:
+      - enabled: false
+        label: Hermes SOUL bootstrap
+        path: ~/.hermes/SOUL.md
+        order: 10
+        max_bytes: 12000
+        optional: true
+      - enabled: false
+        label: Hermes MEMORY bootstrap
+        path: ~/.hermes/memories/MEMORY.md
+        order: 20
+        max_bytes: 8000
+        optional: true
+      - enabled: false
+        label: Hermes USER bootstrap
+        path: ~/.hermes/memories/USER.md
+        order: 30
+        max_bytes: 8000
+        optional: true
+  recent_context:
+    enabled: false
+    when: first_turn
+    source: disabled_placeholder
+    budget: 1000
+  dynamic_context:
+    enabled: false
+    when: each_turn
+    budget: 1000
+    query: ""
   context_injection:
     enabled: false
     load_skill: false
     skill_path: ""
     budget: 1000
-    query: "current projects, recent decisions, and active tasks"
+    query: ""
 
 logging:
   level: INFO

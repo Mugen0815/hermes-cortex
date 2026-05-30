@@ -138,7 +138,7 @@ class EmbeddingsConfig:
 
 @dataclass
 class SearchConfig:
-    top_k: int = 10
+    top_k: int = 20
     bm25_weight: float = 0.5
     vector_weight: float = 0.5
     rrf_k: int = 60
@@ -175,10 +175,55 @@ class SearchConfig:
 
 
 @dataclass
+class StaticFileIncludeConfig:
+    enabled: bool = True
+    label: str = ""
+    path: Optional[Path] = None
+    order: int = 100
+    budget: Optional[int] = None
+    max_bytes: Optional[int] = None
+    optional: bool = True
+
+
+@dataclass
 class ContextBuilderConfig:
     token_budget: int = 4000
     cite_sources: bool = True
     include_hermes_memory: bool = False
+    include_static_files: list[StaticFileIncludeConfig] = field(default_factory=list)
+
+
+@dataclass
+class SkillContextConfig:
+    enabled: bool = True
+    load_skill: bool = True
+    skill_path: str = ""
+    budget: int = 1000
+    when: str = "each_turn"
+
+
+@dataclass
+class BootstrapContextConfig:
+    enabled: bool = False
+    budget: int = 1000
+    when: str = "first_turn"
+    include_static_files: list[StaticFileIncludeConfig] = field(default_factory=list)
+
+
+@dataclass
+class RecentContextConfig:
+    enabled: bool = False
+    budget: int = 1000
+    when: str = "first_turn"
+    source: str = "disabled_placeholder"
+
+
+@dataclass
+class DynamicContextConfig:
+    enabled: bool = False
+    budget: int = 1000
+    query: str = ""
+    when: str = "each_turn"
 
 
 @dataclass
@@ -223,17 +268,38 @@ class CronConfig:
 class HooksConfig:
     """Lifecycle hooks for Hermes plugin integration.
 
-    The two runtime hooks are configured independently:
-    - ``cache_warm`` controls ``on_session_start`` searcher cache warming.
-    - ``context_injection`` controls ``pre_llm_call`` vault context and optional
-      memory-query-flow skill injection.
+    New semantic blocks (``skill_context``, ``bootstrap_context``,
+    ``recent_context``, ``dynamic_context``) are parsed alongside the legacy
+    ``context_injection`` block. Runtime still consumes the legacy projection
+    until the P6 hook-routing slice lands.
     """
     cache_warm_enabled: bool = False
-    context_injection_enabled: bool = False
-    context_injection_budget: int = 1000   # token budget for injected vault context
+    skill_context: SkillContextConfig = field(default_factory=SkillContextConfig)
+    bootstrap_context: BootstrapContextConfig = field(default_factory=BootstrapContextConfig)
+    recent_context: RecentContextConfig = field(default_factory=RecentContextConfig)
+    dynamic_context: DynamicContextConfig = field(default_factory=DynamicContextConfig)
+    semantic_context_present: bool = False
+    legacy_context_injection_present: bool = False
+    legacy_context_injection_deprecated: bool = False
+    context_injection_enabled: bool = True
+    context_injection_budget: int = 1000   # legacy projection for current runtime
     context_injection_query: str = ""      # empty → auto-derive from user message
-    load_skill: bool = False               # auto-load memory-query-flow skill
+    load_skill: bool = True                # legacy projection for current runtime
     skill_path: str = ""                   # empty → default profile skill path
+
+    def ordered_static_files(self) -> list[StaticFileIncludeConfig]:
+        """Return enabled static file entries in deterministic runtime order."""
+        return sorted(
+            (e for e in self.bootstrap_context.include_static_files if e.enabled),
+            key=lambda e: (e.order, e.label, str(e.path or "")),
+        )
+
+    def missing_required_static_files(self) -> list[StaticFileIncludeConfig]:
+        """Static files that runtime should treat as hard missing inputs."""
+        return [
+            e for e in self.ordered_static_files()
+            if not e.optional and e.path is not None and not e.path.exists()
+        ]
 
 
 @dataclass
@@ -265,6 +331,108 @@ def _as_str_list(value: Any, field_name: str) -> list[str]:
             raise ConfigError(f"{field_name} must contain only non-empty strings")
         out.append(item.strip())
     return out
+
+
+def _raw_mapping(value: Any, field_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{field_name} must be a mapping")
+    return value
+
+
+def _static_file_budget(raw: dict[str, Any], field_name: str) -> tuple[Optional[int], Optional[int]]:
+    has_budget = raw.get("budget") is not None
+    has_max_bytes = raw.get("max_bytes") is not None
+    if has_budget and has_max_bytes:
+        raise ConfigError(f"{field_name} must set only one of budget or max_bytes")
+    budget = int(raw["budget"]) if has_budget else None
+    max_bytes = int(raw["max_bytes"]) if has_max_bytes else None
+    if budget is not None and budget <= 0:
+        raise ConfigError(f"{field_name}.budget must be > 0")
+    if max_bytes is not None and max_bytes <= 0:
+        raise ConfigError(f"{field_name}.max_bytes must be > 0")
+    return budget, max_bytes
+
+
+def _parse_static_file_entries(value: Any, field_name: str) -> list[StaticFileIncludeConfig]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ConfigError(f"{field_name} must be a list of mappings")
+    out: list[StaticFileIncludeConfig] = []
+    for idx, item in enumerate(value):
+        item_field = f"{field_name}[{idx}]"
+        raw = _raw_mapping(item, item_field)
+        label = str(raw.get("label", "")).strip()
+        if not label:
+            raise ConfigError(f"{item_field}.label must be a non-empty string")
+        raw_path = raw.get("path")
+        if raw_path is None or not str(raw_path).strip():
+            raise ConfigError(f"{item_field}.path must be a non-empty path")
+        order = int(raw.get("order", 100))
+        if order < 0:
+            raise ConfigError(f"{item_field}.order must be >= 0")
+        budget, max_bytes = _static_file_budget(raw, item_field)
+        enabled = _to_bool(raw.get("enabled"), default=True)
+        optional = _to_bool(raw.get("optional"), default=True)
+        path = _expand(str(raw_path))
+        if enabled and not optional and path is not None and not path.exists():
+            raise ConfigError(f"{item_field}.path does not exist and optional is false: {path}")
+        out.append(StaticFileIncludeConfig(
+            enabled=enabled,
+            label=label,
+            path=path,
+            order=order,
+            budget=budget,
+            max_bytes=max_bytes,
+            optional=optional,
+        ))
+    return sorted(out, key=lambda e: (e.order, e.label, str(e.path or "")))
+
+
+def _parse_skill_context(raw: dict[str, Any]) -> SkillContextConfig:
+    default = SkillContextConfig()
+    return SkillContextConfig(
+        enabled=_to_bool(raw.get("enabled"), default=default.enabled),
+        load_skill=_to_bool(raw.get("load_skill"), default=default.load_skill),
+        skill_path=str(raw.get("skill_path", default.skill_path)),
+        budget=int(raw.get("budget", default.budget)),
+        when=str(raw.get("when", default.when)),
+    )
+
+
+def _parse_bootstrap_context(raw: dict[str, Any]) -> BootstrapContextConfig:
+    default = BootstrapContextConfig()
+    return BootstrapContextConfig(
+        enabled=_to_bool(raw.get("enabled"), default=default.enabled),
+        budget=int(raw.get("budget", default.budget)),
+        when=str(raw.get("when", default.when)),
+        include_static_files=_parse_static_file_entries(
+            raw.get("include_static_files"),
+            "hooks.bootstrap_context.include_static_files",
+        ),
+    )
+
+
+def _parse_recent_context(raw: dict[str, Any]) -> RecentContextConfig:
+    default = RecentContextConfig()
+    return RecentContextConfig(
+        enabled=_to_bool(raw.get("enabled"), default=default.enabled),
+        budget=int(raw.get("budget", default.budget)),
+        when=str(raw.get("when", default.when)),
+        source=str(raw.get("source", default.source)),
+    )
+
+
+def _parse_dynamic_context(raw: dict[str, Any]) -> DynamicContextConfig:
+    default = DynamicContextConfig()
+    return DynamicContextConfig(
+        enabled=_to_bool(raw.get("enabled"), default=default.enabled),
+        budget=int(raw.get("budget", default.budget)),
+        query=str(raw.get("query", default.query)),
+        when=str(raw.get("when", default.when)),
+    )
 
 
 def _validate_cron_nightly_promotion(c: "CronNightlyPromotionConfig", cfg_path: Path) -> None:
@@ -502,7 +670,7 @@ def load_config(path: Optional[str | Path] = None) -> Config:
     # ---- search ----
     s = raw.get("search") or {}
     search = SearchConfig(
-        top_k=int(s.get("top_k", 10)),
+        top_k=int(s.get("top_k", 20)),
         bm25_weight=float(s.get("bm25_weight", 0.5)),
         vector_weight=float(s.get("vector_weight", 0.5)),
         rrf_k=int(s.get("rrf_k", 60)),
@@ -525,6 +693,10 @@ def load_config(path: Optional[str | Path] = None) -> Config:
         token_budget=int(cb.get("token_budget", 4000)),
         cite_sources=_to_bool(cb.get("cite_sources"), default=True),
         include_hermes_memory=_to_bool(cb.get("include_hermes_memory"), default=False),
+        include_static_files=_parse_static_file_entries(
+            cb.get("include_static_files"),
+            "context_builder.include_static_files",
+        ),
     )
 
     # ---- cron ----
@@ -576,15 +748,46 @@ def load_config(path: Optional[str | Path] = None) -> Config:
 
     # ---- hooks ----
     hk = raw.get("hooks") or {}
-    cache_warm = hk.get("cache_warm") or {}
-    context_injection = hk.get("context_injection") or {}
+    cache_warm = _raw_mapping(hk.get("cache_warm"), "hooks.cache_warm")
+    context_injection = _raw_mapping(hk.get("context_injection"), "hooks.context_injection")
+    semantic_keys = ("skill_context", "bootstrap_context", "recent_context", "dynamic_context")
+    semantic_present = any(k in hk for k in semantic_keys)
+    legacy_present = "context_injection" in hk
+
+    skill_context = _parse_skill_context(_raw_mapping(hk.get("skill_context"), "hooks.skill_context"))
+    bootstrap_context = _parse_bootstrap_context(_raw_mapping(hk.get("bootstrap_context"), "hooks.bootstrap_context"))
+    recent_context = _parse_recent_context(_raw_mapping(hk.get("recent_context"), "hooks.recent_context"))
+    dynamic_context = _parse_dynamic_context(_raw_mapping(hk.get("dynamic_context"), "hooks.dynamic_context"))
+
+    if semantic_present or not legacy_present:
+        context_enabled = skill_context.enabled or bootstrap_context.enabled or dynamic_context.enabled
+        context_budget = dynamic_context.budget if dynamic_context.enabled else skill_context.budget
+        context_query = dynamic_context.query
+        load_skill = skill_context.enabled and skill_context.load_skill
+        skill_path = skill_context.skill_path
+        legacy_deprecated = legacy_present
+    else:
+        context_enabled = _to_bool(context_injection.get("enabled"), default=False)
+        context_budget = int(context_injection.get("budget", 1000))
+        context_query = str(context_injection.get("query", ""))
+        load_skill = _to_bool(context_injection.get("load_skill"), default=False)
+        skill_path = str(context_injection.get("skill_path", ""))
+        legacy_deprecated = True
+
     hooks = HooksConfig(
         cache_warm_enabled=_to_bool(cache_warm.get("enabled"), default=False),
-        context_injection_enabled=_to_bool(context_injection.get("enabled"), default=False),
-        context_injection_budget=int(context_injection.get("budget", 1000)),
-        context_injection_query=str(context_injection.get("query", "")),
-        load_skill=_to_bool(context_injection.get("load_skill"), default=False),
-        skill_path=str(context_injection.get("skill_path", "")),
+        skill_context=skill_context,
+        bootstrap_context=bootstrap_context,
+        recent_context=recent_context,
+        dynamic_context=dynamic_context,
+        semantic_context_present=semantic_present,
+        legacy_context_injection_present=legacy_present,
+        legacy_context_injection_deprecated=legacy_deprecated,
+        context_injection_enabled=context_enabled,
+        context_injection_budget=context_budget,
+        context_injection_query=context_query,
+        load_skill=load_skill,
+        skill_path=skill_path,
     )
 
     log_level = (raw.get("logging") or {}).get("level", "INFO")

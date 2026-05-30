@@ -585,9 +585,16 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     print(f"Collection:      {cfg.index.collection}")
     print(f"Embeddings:      {cfg.embeddings.model} ({cfg.embeddings.device})")
     print(f"Cache warm:      {cfg.hooks.cache_warm_enabled}")
-    print(f"Context inject:  {cfg.hooks.context_injection_enabled}")
-    print(f"Context budget:  {cfg.hooks.context_injection_budget}")
-    print(f"Context query:   {cfg.hooks.context_injection_query or '(user message)'}")
+    print(f"Skill context:   {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when})")
+    print(f"Bootstrap ctx:   {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when})")
+    print(f"Recent context:  {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.source})")
+    print(f"Dynamic context: {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when})")
+    print(f"Dynamic budget:  {cfg.hooks.dynamic_context.budget}")
+    print(f"Dynamic query:   {cfg.hooks.dynamic_context.query or '(user message when enabled)'}")
+    print(f"Static files:    {len(cfg.hooks.bootstrap_context.include_static_files)} configured")
+    print(f"Legacy context:  {cfg.hooks.legacy_context_injection_present}"
+          f"{' (deprecated/ignored)' if cfg.hooks.legacy_context_injection_deprecated else ''}")
+    print(f"Runtime projection: {cfg.hooks.context_injection_enabled}")
     print(f"Load skill:      {cfg.hooks.load_skill}")
     print(f"Skill path:      {cfg.hooks.skill_path or '(default profile skill path)'}")
     return 0
@@ -603,7 +610,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"  Chunks:         {cfg.index.chunks_path} ({'ok' if cfg.index.chunks_path.exists() else 'missing'})")
     print(f"  Chroma:         {cfg.index.chroma_path} ({'ok' if cfg.index.chroma_path.exists() else 'missing'})")
     print(f"  Cache warm:     {cfg.hooks.cache_warm_enabled}")
-    print(f"  Context inject: {cfg.hooks.context_injection_enabled}")
+    print(f"  Skill context:  {cfg.hooks.skill_context.enabled}")
+    print(f"  Bootstrap ctx:  {cfg.hooks.bootstrap_context.enabled}")
+    print(f"  Recent context: {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.source})")
+    print(f"  Dynamic ctx:    {cfg.hooks.dynamic_context.enabled}")
+    print(f"  Static files:   {len(cfg.hooks.bootstrap_context.include_static_files)} configured")
+    print(f"  Legacy context: {cfg.hooks.legacy_context_injection_present}"
+          f"{' (deprecated/ignored)' if cfg.hooks.legacy_context_injection_deprecated else ''}")
     print(f"  Load skill:     {cfg.hooks.load_skill}")
     return 0
 

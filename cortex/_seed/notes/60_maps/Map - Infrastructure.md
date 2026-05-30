@@ -18,18 +18,15 @@ stability: stable
 
 # Map - Infrastructure
 
-Hosts, VMs, and core services.
+Public seed-vault infrastructure concepts and repo/storage entry points.
 
-## Hosts
-- [[Skynet Host]] — bare-metal N100, 32 GB RAM, runs Jarvis VM
-- [[Alpha Workstation]] — Ryzen 9 5950X, RTX 3090, ML/training workloads
-
-## VMs
-- [[Jarvis VM]] — Ubuntu, primary agent runtime
+## Runtime Concepts
+- Agent runtime hosts and private workstation details are deployment-specific; document them in your local vault if they are relevant.
+- Long-term memory vault locations are deployment-specific; see [[Vault Schema]] for public schema conventions.
 
 ## Repositories
-- [[Project - hermes-cortex]] — `~/hermes-workspace/hermes-cortex`
+- [[Project - hermes-cortex]] — Cortex memory system source and docs
 
 ## Storage / Data
-- [[Obsidian Vault]] — curated long-term memory
+- [[Vault Schema]] — frontmatter fields and folder routing
 - [[Hermes Memory Files]] — runtime memory at `~/.hermes/`

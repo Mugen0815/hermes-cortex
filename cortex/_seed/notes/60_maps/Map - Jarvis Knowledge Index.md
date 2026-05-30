@@ -26,17 +26,14 @@ a hand-curated overview that points to durable notes by area.
 - [[Hermes Memory Files]] — MEMORY.md / USER.md / SOUL.md and their roles
 
 ## Infrastructure
-- [[Map - Infrastructure]] — VMs, hosts, services
-- [[Jarvis VM]] — the runtime VM
-- [[Alpha Workstation]] — GPU host
+- [[Map - Infrastructure]] — public infrastructure concepts and local deployment placeholders
 
 ## Active Projects
 - [[Project - hermes-cortex]] — the cognitive memory system you're reading
-- [[Project - Jarvis Homebase]] — versioned infra repo
 
 ## Conventions
 - [[Vault Schema]] — frontmatter fields and folder routing
 - [[Workspace Layout]] — what lives where on disk
 
 ## Maintenance
-- [[Runbook - Promote session knowledge]] — nightly promotion job
+- Add local, private runbooks to your own vault as needed; the seed vault intentionally avoids machine-specific runbook links.

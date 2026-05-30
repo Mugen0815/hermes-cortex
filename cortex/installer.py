@@ -173,6 +173,10 @@ class Installer:
     def _copy_seed_notes(self) -> None:
         seed_notes = _seed_root() / "notes"
         for src in seed_notes.rglob("*.md"):
+            # Folder READMEs document the seed package layout; they are not vault
+            # notes and may intentionally omit note frontmatter.
+            if src.name == "README.md":
+                continue
             rel = src.relative_to(seed_notes)
             dst = self.plan.vault_path / rel
             self._copy_file(src, dst)

@@ -404,7 +404,10 @@ def _pre_llm_call(
     """
     cfg = _HOOK_CONFIG_CACHE.get("config") or _load_hooks_config()
     hooks = cfg.get("hooks")
-    if hooks is not None and getattr(hooks, "semantic_context_present", False):
+    if hooks is not None and (
+        getattr(hooks, "semantic_context_present", False)
+        or not getattr(hooks, "legacy_context_injection_present", False)
+    ):
         return _pre_llm_call_semantic(hooks, user_message, is_first_turn)
 
     if not cfg.get("context_injection_enabled"):

@@ -299,6 +299,26 @@ hooks:
     assert plugin_runtime._pre_llm_call(user_message="find me", is_first_turn=True) is None
 
 
+def test_pre_llm_minimal_no_hooks_uses_semantic_defaults_without_dynamic_vault(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cfg_path = _runtime_cfg(tmp_path, "")
+    _set_runtime_config(monkeypatch, cfg_path)
+    calls: list[dict] = []
+    monkeypatch.setattr(plugin_runtime, "_load_skill_content", lambda path: "SKILL DEFAULT")
+    monkeypatch.setattr(
+        plugin_runtime,
+        "_vault_build_context",
+        lambda **kwargs: calls.append(kwargs) or {"text": "unexpected", "tokens_used": 1},
+    )
+
+    out = plugin_runtime._pre_llm_call(user_message="auto?", is_first_turn=False)
+
+    assert calls == []
+    assert out == "SKILL DEFAULT"
+    assert "[Vault context from hermes-cortex]" not in out
+
+
 def test_pre_llm_dynamic_true_uses_explicit_query(tmp_path: Path, monkeypatch) -> None:
     cfg_path = _runtime_cfg(tmp_path, """
 hooks:

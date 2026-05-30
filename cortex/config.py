@@ -270,8 +270,8 @@ class HooksConfig:
 
     New semantic blocks (``skill_context``, ``bootstrap_context``,
     ``recent_context``, ``dynamic_context``) are parsed alongside the legacy
-    ``context_injection`` block. Runtime still consumes the legacy projection
-    until the P6 hook-routing slice lands.
+    ``context_injection`` block. Semantic blocks take precedence at runtime;
+    legacy projection fields remain for legacy-only configs and diagnostics.
     """
     cache_warm_enabled: bool = False
     skill_context: SkillContextConfig = field(default_factory=SkillContextConfig)
@@ -772,7 +772,7 @@ def load_config(path: Optional[str | Path] = None) -> Config:
         context_query = str(context_injection.get("query", ""))
         load_skill = _to_bool(context_injection.get("load_skill"), default=False)
         skill_path = str(context_injection.get("skill_path", ""))
-        legacy_deprecated = True
+        legacy_deprecated = False
 
     hooks = HooksConfig(
         cache_warm_enabled=_to_bool(cache_warm.get("enabled"), default=False),

@@ -482,6 +482,7 @@ hooks:
     skill_path: /tmp/legacy/SKILL.md
 """))
     assert cfg.hooks.legacy_context_injection_present is True
+    assert cfg.hooks.legacy_context_injection_deprecated is False
     assert cfg.hooks.semantic_context_present is False
     assert cfg.hooks.context_injection_enabled is True
     assert cfg.hooks.context_injection_budget == 1234

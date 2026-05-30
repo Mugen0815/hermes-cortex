@@ -62,6 +62,43 @@ def _setup(tmp_path: Path) -> Path:
     return cfg_path
 
 
+def test_config_show_legacy_context_label_depends_on_semantic_presence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    legacy_cfg = _setup(tmp_path / "legacy")
+    legacy_cfg.write_text(
+        legacy_cfg.read_text()
+        + """
+hooks:
+  context_injection:
+    enabled: true
+"""
+    )
+    rc = main(["config", "show", "--config", str(legacy_cfg)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Legacy context:  True\n" in out
+    assert "deprecated/ignored" not in out
+
+    mixed_dir = tmp_path / "mixed"
+    mixed_dir.mkdir()
+    mixed_cfg = _setup(mixed_dir)
+    mixed_cfg.write_text(
+        mixed_cfg.read_text()
+        + """
+hooks:
+  context_injection:
+    enabled: true
+  dynamic_context:
+    enabled: false
+"""
+    )
+    rc = main(["config", "show", "--config", str(mixed_cfg)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Legacy context:  True (deprecated/ignored)" in out
+
+
 def test_cli_index_subcommand(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     cfg = _setup(tmp_path)
     rc = main(["index", "--config", str(cfg)])

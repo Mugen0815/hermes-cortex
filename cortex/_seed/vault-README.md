@@ -27,7 +27,10 @@ These belong to Hermes itself, not to the curated knowledge base:
 | `USER.md`   | Who the user is, preferences | `~/.hermes/memories/USER.md` |
 | `SOUL.md`   | Agent persona, character, rules | `~/.hermes/SOUL.md` |
 
-`hermes-cortex` reads these as **complementary context** during retrieval, but does not store them in the vault.
+`hermes-cortex` reads these as **complementary context** during retrieval, but
+does not store them in the vault. Fresh init keeps them read-only by default;
+new configs should prefer the semantic hook blocks and static-file bootstrap
+path over the old blanket `context_builder.include_hermes_memory` switch.
 
 ## Note Schema
 

@@ -26,15 +26,17 @@ Knowledge in (promotion) → stored (Obsidian) → found (hybrid retrieval) →
 used (context builder) → improved (review/feedback).
 
 ## Status
-Phase 0 — Foundation. Repo scaffolded, schema defined, config loader done
-with 8 tests passing. Vault skeleton at `~/hermes-workspace/vault/`.
+Fresh-init and hook-context cutover docs are now aligned with the semantic
+runtime split. The seed vault is treated as read-only context by default, and
+legacy mutation paths are explicitly opt-in.
 
 ## Architecture / Approach
 - **Obsidian** = source of truth
 - **Vector + BM25** = hybrid search index (cache, rebuildable)
 - **Tools** (LLM-invoked): `vault_search`, `vault_read_note`, `vault_build_context`
 - **Plugins** (background): SessionCapture, NightlyPromotion, WeeklyReview, IndexMaintenance, ...
-- Hermes memory files (`MEMORY.md`, `USER.md`, `SOUL.md`) read as context, not indexed.
+- Hermes memory files (`MEMORY.md`, `USER.md`, `SOUL.md`) read as context, not
+  indexed; new configs use semantic hook blocks and static bootstrap files.
 
 ## Key Paths
 - Repo: `https://github.com/Mugen0815/hermes-cortex.git`

@@ -64,7 +64,9 @@ hermes tools enable cortex
 ./install.sh --with-hermes-venv --with-hermes-skills
 ```
 
-Initialize the vault config and build the retrieval artifacts:
+Initialize the vault config and build the retrieval artifacts. Fresh init is
+idempotent and does not mutate `SOUL.md`, `MEMORY.md`, or `USER.md` by default;
+legacy memory-file mutation stays opt-in only.
 
 ```bash
 hermes cortex init --yes
@@ -133,12 +135,12 @@ Then start a new Hermes session or `/reset` the current one.
 
 | Command | Purpose |
 |---|---|
-| `hermes cortex init --yes` | Create config, vault folders, and seed notes |
+| `hermes cortex init --yes` | Create config, vault folders, and seed notes without mutating Hermes memory files by default |
 | `hermes cortex index [--force]` | Chunk vault notes into `chunks.jsonl` |
 | `hermes cortex embed [--force]` | Build/update Chroma embeddings |
 | `hermes cortex graph build [--force]` | Build wikilink graph artifacts |
 | `hermes cortex validate-frontmatter [--json] [--strict] [--path ...]` | Read-only Vault frontmatter validation |
-| `hermes cortex search "query" --top-k 10` | Search the vault from the shell |
+| `hermes cortex search "query" --top-k 20` | Search the vault from the shell |
 | `hermes cortex search-eval --output search-eval-baseline.json --baseline baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason); `--baseline` adds compare summary and baseline deltas |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
 | `hermes cortex config path` | Show active config path |
@@ -293,21 +295,49 @@ Minimal shape:
 vault:
   path: ~/hermes-workspace/vault
 search:
-  top_k: 10
+  top_k: 20
   bm25_weight: 0.5
   vector_weight: 0.5
   graph_weight: 0.2
 context_builder:
   token_budget: 4000
+  include_hermes_memory: false
+  include_static_files: []
 hooks:
   cache_warm:
     enabled: true
-  context_injection:
+  skill_context:
     enabled: true
-    budget: 1000
-    query: "current projects, recent decisions, and active tasks"
+    when: each_turn
     load_skill: true
+    skill_path: ""
+    budget: 1000
+  bootstrap_context:
+    enabled: true
+    when: first_turn
+    budget: 1000
+    include_static_files: []
+  recent_context:
+    enabled: false
+    when: first_turn
+    source: disabled_placeholder
+  dynamic_context:
+    enabled: false
+    when: each_turn
+    budget: 1000
+    query: ""
+  context_injection:
+    enabled: false
+    budget: 1000
+    query: ""
+    load_skill: false
 ```
+
+`skill_context` is the each-turn runtime rules channel. `bootstrap_context`
+is the first-turn static bootstrap channel, with deterministic
+`include_static_files` ordering. `dynamic_context` stays off by default and only
+injects Vault context when explicitly enabled. `context_injection` remains a
+legacy compatibility fallback; new configs should prefer the semantic blocks.
 
 `HERMES_HOME` is respected. Worker profiles therefore use their own Cortex config:
 

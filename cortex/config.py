@@ -265,6 +265,20 @@ class CronConfig:
 
 
 @dataclass
+class HookStatus:
+    phase: str
+    name: str
+    enabled: bool
+    effective: bool
+    timing: str
+    source: str
+    payload: str
+    target: str
+    origin: str
+    skipped_reason: str = ""
+
+
+@dataclass
 class HooksConfig:
     """Lifecycle hooks for Hermes plugin integration.
 
@@ -300,6 +314,140 @@ class HooksConfig:
             e for e in self.ordered_static_files()
             if not e.optional and e.path is not None and not e.path.exists()
         ]
+
+    def uses_semantic_runtime(self) -> bool:
+        """Return True when runtime should use semantic hook blocks.
+
+        Legacy ``hooks.context_injection`` remains the runtime path only for
+        legacy-only configs. Any semantic hook block opts the config into the
+        lifecycle-oriented model; if both are present, legacy is parsed for
+        compatibility diagnostics but ignored for effective behavior.
+        """
+        return self.semantic_context_present or not self.legacy_context_injection_present
+
+    def hook_statuses(self) -> list[HookStatus]:
+        """Return operator-readable effective hook lifecycle rows."""
+        semantic = self.uses_semantic_runtime()
+        origin = "semantic" if self.semantic_context_present else "semantic-default"
+        rows: list[HookStatus] = [
+            HookStatus(
+                phase="session_start",
+                name="cache_warm",
+                enabled=self.cache_warm_enabled,
+                effective=self.cache_warm_enabled,
+                timing="session_start",
+                source="Vault index/cache",
+                payload="searcher cache warm",
+                target="process-local cache",
+                origin="semantic",
+                skipped_reason="disabled" if not self.cache_warm_enabled else "",
+            )
+        ]
+
+        if semantic:
+            skill = self.skill_context
+            rows.append(HookStatus(
+                phase="pre_llm",
+                name="skill_bootstrap",
+                enabled=skill.enabled and skill.load_skill,
+                effective=skill.enabled and skill.load_skill,
+                timing=skill.when,
+                source=skill.skill_path or "default profile memory-query-flow skill",
+                payload="skill body",
+                target="user-message hook context",
+                origin=origin,
+                skipped_reason=(
+                    "skill_context disabled" if not skill.enabled
+                    else "load_skill false" if not skill.load_skill
+                    else ""
+                ),
+            ))
+
+            bootstrap = self.bootstrap_context
+            static_count = len(bootstrap.include_static_files)
+            missing_optional = sum(
+                1 for e in bootstrap.include_static_files
+                if e.enabled and e.optional and (e.path is None or not e.path.exists())
+            )
+            rows.append(HookStatus(
+                phase="pre_llm",
+                name="static_file_bootstrap",
+                enabled=bootstrap.enabled,
+                effective=bootstrap.enabled and static_count > 0,
+                timing=bootstrap.when,
+                source=f"{static_count} configured static file(s)",
+                payload="static markdown snippets",
+                target="user-message hook context",
+                origin=origin,
+                skipped_reason=(
+                    "bootstrap_context disabled" if not bootstrap.enabled
+                    else "no static files configured" if static_count == 0
+                    else f"{missing_optional} optional file(s) missing" if missing_optional else ""
+                ),
+            ))
+
+            recent = self.recent_context
+            rows.append(HookStatus(
+                phase="pre_llm",
+                name="recent_context",
+                enabled=recent.enabled,
+                effective=False,
+                timing=recent.when,
+                source=recent.source or "SessionDB",
+                payload="SessionDB recent topic context",
+                target="user-message hook context",
+                origin=origin,
+                skipped_reason=(
+                    "disabled" if not recent.enabled
+                    else "placeholder only; SessionDB recent-context query is not implemented"
+                ),
+            ))
+
+            dynamic = self.dynamic_context
+            rows.append(HookStatus(
+                phase="pre_llm",
+                name="dynamic_context",
+                enabled=dynamic.enabled,
+                effective=dynamic.enabled and dynamic.budget > 0,
+                timing=dynamic.when,
+                source="Vault query",
+                payload=f"vault context budget={dynamic.budget}",
+                target="user-message hook context",
+                origin=origin,
+                skipped_reason=(
+                    "disabled" if not dynamic.enabled
+                    else "budget <= 0" if dynamic.budget <= 0
+                    else ""
+                ),
+            ))
+
+        legacy_effective = self.legacy_context_injection_present and not semantic
+        payloads = ["Vault dynamic context"]
+        if self.load_skill:
+            payloads.insert(0, "skill body")
+        rows.append(HookStatus(
+            phase="pre_llm",
+            name="legacy_context_injection",
+            enabled=self.legacy_context_injection_present and self.context_injection_enabled,
+            effective=legacy_effective and self.context_injection_enabled,
+            timing="each_turn",
+            source="legacy hooks.context_injection",
+            payload=" + ".join(payloads),
+            target="user-message hook context",
+            origin=(
+                "legacy-active" if legacy_effective
+                else "legacy-ignored" if self.legacy_context_injection_present
+                else "legacy-absent"
+            ),
+            skipped_reason=(
+                "ignored because semantic hook blocks are present" if self.legacy_context_injection_present and semantic
+                else "not configured" if not self.legacy_context_injection_present
+                else "disabled" if not self.context_injection_enabled
+                else ""
+            ),
+        ))
+
+        return rows
 
 
 @dataclass
@@ -391,6 +539,14 @@ def _parse_static_file_entries(value: Any, field_name: str) -> list[StaticFileIn
     return sorted(out, key=lambda e: (e.order, e.label, str(e.path or "")))
 
 
+def _validate_when(value: Any, field_name: str, allowed: set[str]) -> str:
+    value = str(value).strip()
+    if value not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise ConfigError(f"{field_name}.when must be one of: {allowed_text} (got {value!r})")
+    return value
+
+
 def _parse_skill_context(raw: dict[str, Any]) -> SkillContextConfig:
     default = SkillContextConfig()
     return SkillContextConfig(
@@ -398,7 +554,7 @@ def _parse_skill_context(raw: dict[str, Any]) -> SkillContextConfig:
         load_skill=_to_bool(raw.get("load_skill"), default=default.load_skill),
         skill_path=str(raw.get("skill_path", default.skill_path)),
         budget=int(raw.get("budget", default.budget)),
-        when=str(raw.get("when", default.when)),
+        when=_validate_when(raw.get("when", default.when), "hooks.skill_context", {"each_turn", "first_turn"}),
     )
 
 
@@ -407,7 +563,7 @@ def _parse_bootstrap_context(raw: dict[str, Any]) -> BootstrapContextConfig:
     return BootstrapContextConfig(
         enabled=_to_bool(raw.get("enabled"), default=default.enabled),
         budget=int(raw.get("budget", default.budget)),
-        when=str(raw.get("when", default.when)),
+        when=_validate_when(raw.get("when", default.when), "hooks.bootstrap_context", {"first_turn"}),
         include_static_files=_parse_static_file_entries(
             raw.get("include_static_files"),
             "hooks.bootstrap_context.include_static_files",
@@ -420,7 +576,7 @@ def _parse_recent_context(raw: dict[str, Any]) -> RecentContextConfig:
     return RecentContextConfig(
         enabled=_to_bool(raw.get("enabled"), default=default.enabled),
         budget=int(raw.get("budget", default.budget)),
-        when=str(raw.get("when", default.when)),
+        when=_validate_when(raw.get("when", default.when), "hooks.recent_context", {"first_turn"}),
         source=str(raw.get("source", default.source)),
     )
 
@@ -431,7 +587,7 @@ def _parse_dynamic_context(raw: dict[str, Any]) -> DynamicContextConfig:
         enabled=_to_bool(raw.get("enabled"), default=default.enabled),
         budget=int(raw.get("budget", default.budget)),
         query=str(raw.get("query", default.query)),
-        when=str(raw.get("when", default.when)),
+        when=_validate_when(raw.get("when", default.when), "hooks.dynamic_context", {"each_turn"}),
     )
 
 

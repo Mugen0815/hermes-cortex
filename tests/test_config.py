@@ -520,6 +520,79 @@ hooks:
     assert cfg.hooks.skill_path == "/tmp/new/SKILL.md"
 
 
+def test_hook_statuses_explain_semantic_runtime_and_ignored_legacy(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, """
+hooks:
+  context_injection:
+    enabled: true
+    load_skill: false
+  skill_context:
+    enabled: true
+    load_skill: true
+  bootstrap_context:
+    enabled: true
+  dynamic_context:
+    enabled: true
+    budget: 500
+"""))
+    assert cfg.hooks.uses_semantic_runtime() is True
+    statuses = {row.name: row for row in cfg.hooks.hook_statuses()}
+    assert statuses["cache_warm"].phase == "session_start"
+    assert statuses["skill_bootstrap"].effective is True
+    assert statuses["static_file_bootstrap"].effective is False
+    assert statuses["static_file_bootstrap"].skipped_reason == "no static files configured"
+    assert statuses["dynamic_context"].effective is True
+    assert statuses["legacy_context_injection"].enabled is True
+    assert statuses["legacy_context_injection"].effective is False
+    assert statuses["legacy_context_injection"].origin == "legacy-ignored"
+    assert "semantic hook blocks" in statuses["legacy_context_injection"].skipped_reason
+
+
+def test_hook_statuses_keep_legacy_only_configs_active(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, """
+hooks:
+  context_injection:
+    enabled: true
+    load_skill: false
+"""))
+    assert cfg.hooks.uses_semantic_runtime() is False
+    statuses = {row.name: row for row in cfg.hooks.hook_statuses()}
+    assert "skill_bootstrap" not in statuses
+    assert statuses["legacy_context_injection"].enabled is True
+    assert statuses["legacy_context_injection"].effective is True
+    assert statuses["legacy_context_injection"].origin == "legacy-active"
+
+
+def test_hook_statuses_show_absent_legacy_for_default_semantic_runtime(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, ""))
+    assert cfg.hooks.uses_semantic_runtime() is True
+    statuses = {row.name: row for row in cfg.hooks.hook_statuses()}
+    assert statuses["legacy_context_injection"].enabled is False
+    assert statuses["legacy_context_injection"].effective is False
+    assert statuses["legacy_context_injection"].origin == "legacy-absent"
+    assert statuses["legacy_context_injection"].skipped_reason == "not configured"
+
+
+@pytest.mark.parametrize(
+    ("block", "bad_when", "match"),
+    [
+        ("skill_context", "session_start", "hooks.skill_context.when"),
+        ("bootstrap_context", "each_turn", "hooks.bootstrap_context.when"),
+        ("recent_context", "each_turn", "hooks.recent_context.when"),
+        ("dynamic_context", "first_turn", "hooks.dynamic_context.when"),
+    ],
+)
+def test_hook_context_when_values_are_validated(
+    tmp_path: Path, block: str, bad_when: str, match: str
+) -> None:
+    with pytest.raises(ConfigError, match=match):
+        load_config(_minimal_hooks_cfg(tmp_path, f"""
+hooks:
+  {block}:
+    when: {bad_when}
+"""))
+
+
 def test_static_file_optional_missing_allowed_required_missing_raises(tmp_path: Path) -> None:
     missing = tmp_path / "missing.md"
     cfg = load_config(_minimal_hooks_cfg(tmp_path, f"""

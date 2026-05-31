@@ -144,8 +144,8 @@ Then start a new Hermes session or `/reset` the current one.
 | `hermes cortex search-eval --output search-eval-baseline.json --baseline baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason); `--baseline` adds compare summary and baseline deltas |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
 | `hermes cortex config path` | Show active config path |
-| `hermes cortex config show` | Show effective config: vault, index, hooks, skill path |
-| `hermes cortex status` | Show plugin/code path plus config, vault, and index state |
+| `hermes cortex config show` | Show effective config: vault, index, hooks, skill path, and hook lifecycle rows |
+| `hermes cortex status` | Show plugin/code path plus config, vault, index state, and effective hook lifecycle/status |
 | `hermes cortex graph status` | Show graph health and diagnostics |
 | `hermes cortex graph viewer -o graph.html --embed-data` | Generate a static graph viewer |
 | `hermes cortex lifecycle maintenance` | Run index → embed → graph build |
@@ -154,6 +154,25 @@ Then start a new Hermes session or `/reset` the current one.
 | `hermes cortex cron status` | Check all installed Cortex cron jobs |
 | `hermes cortex cron status --job nightly` | Check only the nightly promotion cron job |
 | `hermes cortex cron status --job weekly` | Check only the WeeklyReview cron job |
+
+## Hook lifecycle status
+
+`cortex config show` and `cortex status` now print an operator-facing hook
+lifecycle table. It separates lifecycle phases from legacy projection fields:
+
+- `cache_warm` runs at `session_start` and only warms process-local cache.
+- `skill_bootstrap`, `static_file_bootstrap`, `recent_context`, and
+  `dynamic_context` describe `pre_llm` user-message hook context.
+- `legacy_context_injection` is still displayed for compatibility. In a
+  legacy-only config it is `legacy-active`; when any semantic hook block is
+  configured it is `legacy-ignored` and the skipped reason says why. If absent,
+  it is shown as `legacy-absent`.
+
+The table shows `enabled`, `effective`, timing (`first_turn`, `each_turn`, or
+`session_start`), origin, source, payload, target, and skipped reason. Supported
+`when` values are validated per block: `skill_context` accepts `first_turn` or
+`each_turn`; `bootstrap_context` and `recent_context` accept only `first_turn`;
+`dynamic_context` accepts only `each_turn`.
 
 ## Nightly promotion lifecycle
 

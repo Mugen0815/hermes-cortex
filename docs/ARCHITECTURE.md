@@ -94,7 +94,13 @@ Runtime hook context is split semantically:
 
 New semantic blocks take precedence over the legacy `hooks.context_injection`
 block. Legacy configs still parse for compatibility, but they are treated as a
-fallback path, not the primary model.
+fallback path, not the primary model. `cortex status` and `cortex config show`
+render this as hook lifecycle rows with explicit `enabled`, `effective`, timing,
+origin, source/payload/target, and skipped reason. A legacy-only config reports
+`legacy_context_injection` as `legacy-active`; a mixed semantic+legacy config
+reports it as `legacy-ignored`; a config with no legacy block reports it as
+`legacy-absent`. `when` is validated per semantic block so impossible lifecycle
+combinations fail during config load rather than quietly drifting at runtime.
 
 ## Nightly/session promotion
 

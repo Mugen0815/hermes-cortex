@@ -1,47 +1,47 @@
-Analysiere Hermes-Sessions aus den letzten {lookback_days} Tag(en) ({timezone}) und extrahiere dauerhaft relevantes Wissen.
+Analyze Hermes sessions from the last {lookback_days} day(s) ({timezone}) and extract durable knowledge.
 
-Die Pipeline läuft in 3 Stufen:
-1. **Du** analysierst Sessions und entscheidest zuerst den Zielordner.
-2. High-confidence Wissen schreibst du direkt in kanonische Vault-Ordner — ohne `promote: true`.
-3. `00_inbox/` nutzt du nur für unsichere Fälle, die menschliches Review brauchen. Danach läuft Cortex Lifecycle/Maintenance.
+The pipeline has three stages:
+1. Analyze sessions and choose the target folder first.
+2. Write high-confidence knowledge directly to canonical Vault folders without `promote: true`.
+3. Use `00_inbox/` only for uncertain items that need human review. Cortex lifecycle/maintenance runs afterward.
 
 ## Vault
-Pfad: {vault_path}
+Path: {vault_path}
 Cortex CLI: {cortex_bin}
 
-## Cron-Konfiguration
-- Lookback: letzte {lookback_days} Tag(e)
-- Lookback-/Prompt-Zeitzone: {timezone}
-- SessionDB primär: `{state_db_path}`
-- Legacy-Fallback aktiviert: {legacy_fallback_enabled}
-- Legacy-Session-Globs:
+## Cron configuration
+- Lookback: last {lookback_days} day(s)
+- Lookback/prompt timezone: {timezone}
+- Primary SessionDB: `{state_db_path}`
+- Legacy fallback enabled: {legacy_fallback_enabled}
+- Legacy session globs:
 {session_globs_block}
 
-Hinweis zur Zeitplanung: Die obige Zeitzone steuert diesen Prompt/Lookback. Die Ausführungszeit des Cron-Ausdrucks wird vom Hermes-Scheduler anhand der Hermes-Runtime-Konfiguration interpretiert.
+Scheduling note: the timezone above controls this prompt/lookback window. The Hermes scheduler interprets the cron expression runtime using the Hermes runtime configuration.
 
-## Zielordner zuerst wählen
-| Inhalt | Ziel |
+## Choose the target folder first
+| Content | Target |
 |---|---|
-| Stabile Systemfakten, Tool-Erkenntnisse, Details | `10_facts/` |
-| Entscheidungen mit Begründung | `20_decisions/` |
-| Aktive Projektkontexte oder Projektstatus | `30_projects/` |
-| Wiederholbare Abläufe, Troubleshooting, Operator-Schritte | `40_runbooks/` |
-| Unsicher / widersprüchlich / braucht Human Review | `00_inbox/` |
+| Stable system facts, tool findings, details | `10_facts/` |
+| Decisions with rationale | `20_decisions/` |
+| Active project context or project status | `30_projects/` |
+| Repeatable workflows, troubleshooting, operator steps | `40_runbooks/` |
+| Uncertain / contradictory / needs human review | `00_inbox/` |
 
-## Kanonische Notes schreiben (Standardfall)
-Wenn die Erkenntnis dauerhaft relevant und mit hoher Sicherheit einordenbar ist, schreibe oder ergänze direkt die passende `.md` Note in `10_facts/`, `20_decisions/`, `30_projects/` oder `40_runbooks/`.
+## Write canonical notes by default
+When a finding is durable, relevant, and high-confidence, write or update the matching `.md` note directly in `10_facts/`, `20_decisions/`, `30_projects/`, or `40_runbooks/`.
 
-Frontmatter-Beispiel für kanonische Notes:
+Frontmatter example for canonical notes:
 
 ```yaml
 ---
 type: fact|decision|runbook|project
 status: active
-title: "Beschreibender Titel"
+title: "Descriptive title"
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 tags: [tag1, tag2]
-aliases: [alternativer_name]
+aliases: [alternate_name]
 source: session
 source_sessions: [session_id_1]
 confidence: medium|high
@@ -50,23 +50,23 @@ stability: stable|evolving
 ---
 ```
 
-Wichtig: Kanonische Notes bekommen kein `promote: true`, kein `cortex_promote: true` und kein `promote_type`.
+Important: canonical notes must not include `promote: true`, `cortex_promote: true`, or `promote_type`.
 
-## Inbox-Kandidaten schreiben (nur Reviewfälle)
-Nur wenn eine Erkenntnis unsicher, konfliktverdächtig, duplikat-sensitiv oder menschlich zu entscheiden ist, schreibe sie nach `00_inbox/` mit Review-Metadaten:
+## Write inbox candidates only for review cases
+Only when a finding is uncertain, conflict-prone, duplicate-sensitive, or requires human judgment, write it to `00_inbox/` with review metadata:
 
 ```yaml
 ---
 type: fact|decision|runbook|project
 status: draft
 review_status: pending
-review_reason: "Warum diese Note menschliches Review braucht"
+review_reason: "Why this note needs human review"
 promote: true
 promote_type: fact|decision|runbook|project
-title: "Beschreibender Titel"
+title: "Descriptive title"
 created: YYYY-MM-DD
 tags: [tag1, tag2]
-aliases: [alternativer_name]
+aliases: [alternate_name]
 source: session
 source_sessions: [session_id_1]
 confidence: medium
@@ -75,53 +75,53 @@ stability: evolving
 ---
 ```
 
-Verwende niemals `status: review`; bekannte Cortex-Statuswerte sind `active`, `draft`, `archived`, `deprecated`, `stale`, `superseded`.
-Verwende niemals `status: active` für live Inbox-Kandidaten; live Inbox-Kandidaten sind `status: draft` + `review_status: pending`.
+Never use `status: review`; known Cortex status values are `active`, `draft`, `archived`, `deprecated`, `stale`, and `superseded`.
+Never use `status: active` for live inbox candidates; live inbox candidates use `status: draft` plus `review_status: pending`.
 
-## Schritte
+## Steps
 
-1. **Sessions deterministisch laden:** Führe zuerst exakt diesen Befehl aus und nutze die JSON-Ausgabe als Session-Eingabe für die Analyse:
+1. **Load sessions deterministically:** Run exactly this command first and use its JSON output as the session input for the analysis:
    ```bash
    {session_source_command}
    ```
-   - Primär wird Hermes SessionDB (`state.db`) read-only gelesen.
-   - Legacy JSON/JSONL-Dateien sind nur Fallback, wenn `state.db` fehlt, unlesbar/schema-inkompatibel ist oder keine Sessions im Lookback enthält.
-   - Ignoriere `request_dump_*.json`; diese Dateien werden vom Loader gezählt, aber nie geparst.
-   - Nutze `diagnostics` im Loader-JSON für den finalen Report.
+   - The primary source is Hermes SessionDB (`state.db`) in read-only mode.
+   - Legacy JSON/JSONL files are only a fallback when `state.db` is missing, unreadable, schema-incompatible, or contains no sessions in the lookback window.
+   - Ignore `request_dump_*.json`; the loader counts these files but never parses them.
+   - Use `diagnostics` from the loader JSON in the final report.
 
-2. **Analysiere** jede Session aus `sessions[]` und extrahiere dauerhaft relevantes Wissen.
+2. **Analyze** every item in `sessions[]` and extract durable knowledge.
 
-3. **Prüfe auf Duplikate:** Durchsuche das gesamte Vault (`find {vault_path} -name '*.md'`) nach existierenden Notes zum selben Thema. Falls bereits vorhanden: überspringe oder ergänze die existierende kanonische Note ohne Promotion-Flags.
+3. **Check for duplicates:** Search the full Vault (`find {vault_path} -name '*.md'`) for existing notes about the same topic. If one exists, skip the item or update the existing canonical note without promotion flags.
 
-4. **Schreibe Notes:**
-   - High-confidence: direkt in den passenden kanonischen Zielordner.
-   - Unsicher / Review nötig: nach `00_inbox/` mit `status: draft`, `review_status: pending`, `review_reason`, `promote: true`, `promote_type`.
+4. **Write notes:**
+   - High-confidence: write directly to the matching canonical target folder.
+   - Uncertain / needs review: write to `00_inbox/` with `status: draft`, `review_status: pending`, `review_reason`, `promote: true`, and `promote_type`.
 
-5. **Nach dem Schreiben:** Führe die Cortex-Pipeline aus:
+5. **After writing:** Run the Cortex pipeline:
    ```bash
    {lifecycle_commands}
    ```
 
-6. **Ignoriere:** temporären Task-Fortschritt, erledigte TODOs, Chat-Noise ohne Dauerwert.
+6. **Ignore:** temporary task progress, completed TODOs, and chat noise without durable value.
 
-7. **Finale Zusammenfassung** als finale Antwort (wird automatisch ausgeliefert):
+7. **Final summary** as the final response (delivered automatically):
 ```
 🧠 Nightly Knowledge Promotion
 
-Sessions analysiert: N
-Quelle: backend=<state_db|legacy_files>, fallback=<true|false>, reason=<fallback_reason>, ignored_request_dump=<N>
-Kanonisch geschrieben: N | Notes in 00_inbox: N | aktualisiert: N | Duplikate übersprungen: N
+Sessions analyzed: N
+Source: backend=<state_db|legacy_files>, fallback=<true|false>, reason=<fallback_reason>, ignored_request_dump=<N>
+Canonical notes written: N | Notes in 00_inbox: N | updated: N | duplicates skipped: N
 
-Neu/aktualisiert kanonisch:
-- [Folder/Type] Titel
+New/updated canonical notes:
+- [Folder/Type] Title
 - ...
 
-Neu in 00_inbox (Review nötig):
-- [Folder/Type] Titel — Grund
+New 00_inbox notes (needs review):
+- [Folder/Type] Title — reason
 - ...
 
-Nichts Dauerhaftes gefunden: (falls zutreffend)
+No durable knowledge found: (if applicable)
 ```
 
-Falls keine Sessions im Lookback-Zeitraum gefunden wurden: antworte mit "🧠 Nightly Promotion: Keine Sessions im Lookback-Zeitraum gefunden."
-Falls nur Chat-Noise ohne Dauerwert: antworte mit "[SILENT]"
+If no sessions were found in the lookback window, respond with "🧠 Nightly Promotion: No sessions found in the lookback window."
+If the sessions contain only chat noise without durable value, respond with "[SILENT]"

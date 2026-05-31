@@ -29,11 +29,21 @@ def test_cron_prompt_templates_are_loaded_from_package_resources():
     assert _WEEKLY_PROMPT == template_root.joinpath("weekly_review.md").read_text(encoding="utf-8")
 
 
-def test_cron_prompt_templates_are_persona_and_platform_neutral():
+def test_cron_prompt_templates_are_persona_platform_and_language_neutral():
+    forbidden_terms = (
+        "Jarvis",
+        bytes.fromhex("44752062697374").decode("utf-8"),
+        "Signal",
+        bytes.fromhex("46c3bc687265").decode("utf-8"),
+        bytes.fromhex("5363687265696265").decode("utf-8"),
+        bytes.fromhex("5072c3bc6665").decode("utf-8"),
+        bytes.fromhex("46616c6c73").decode("utf-8"),
+        bytes.fromhex("5a7573616d6d656e66617373756e67").decode("utf-8"),
+        bytes.fromhex("5a6569747a6f6e65").decode("utf-8"),
+    )
     for prompt in (_NIGHTLY_PROMPT, _WEEKLY_PROMPT):
-        assert "Jarvis" not in prompt
-        assert "Du bist" not in prompt
-        assert "Signal" not in prompt
+        for term in forbidden_terms:
+            assert term not in prompt
 
 
 def test_config_example_defaults_do_not_mention_signal():
@@ -62,7 +72,7 @@ def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
         ),
     )
 
-    assert "direkt in kanonische Vault-Ordner" in prompt
+    assert "directly to canonical Vault folders" in prompt
     assert "`10_facts/`" in prompt
     assert "`20_decisions/`" in prompt
     assert "`30_projects/`" in prompt
@@ -72,14 +82,14 @@ def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
     assert "review_reason:" in prompt
     assert "promote: true" in prompt
     assert "promote_type: fact|decision|runbook|project" in prompt
-    assert "Verwende niemals `status: review`" in prompt
-    assert "Verwende niemals `status: active` für live Inbox-Kandidaten" in prompt
+    assert "Never use `status: review`" in prompt
+    assert "Never use `status: active` for live inbox candidates" in prompt
     assert "*.jsonl" in prompt
     assert "session_*.json" in prompt
     assert "request_dump_*.json" in prompt
     assert "hermes cortex session-sources" in prompt
-    assert "SessionDB primär" in prompt
-    assert "Quelle: backend=<state_db|legacy_files>" in prompt
+    assert "Primary SessionDB" in prompt
+    assert "Source: backend=<state_db|legacy_files>" in prompt
     assert "/private/dev/hermes-cortex/.venv/bin/cortex" not in prompt
 
 
@@ -152,7 +162,7 @@ def test_build_job_uses_custom_config_values():
     assert job["schedule"] == {"kind": "cron", "expr": "15 4 * * *", "display": "15 4 * * *"}
     assert job["deliver"] == "origin"
     assert job["enabled_toolsets"] == ["file"]
-    assert "letzten 3 Tag(en) (UTC)" in job["prompt"]
+    assert "last 3 day(s) (UTC)" in job["prompt"]
     assert "/tmp/state.db" in job["prompt"]
     assert "--no-legacy-fallback" in job["prompt"]
     assert "/tmp/sessions/*.json" in job["prompt"]

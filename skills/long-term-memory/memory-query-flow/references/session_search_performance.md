@@ -1,101 +1,67 @@
 # session_search Performance & Tuning
 
-> Diagnosed 2026-05-07: User reported session_search getting slower over time.
+This public reference describes the common latency model without embedding local
+machine metrics, session counts, provider choices, or private config values. Keep
+real measurements in private operator notes.
 
-## Architecture (Latency Flow)
+## Architecture: latency flow
 
-```
-User query → FTS5 DB search (~0.1s) → Load sessions from DB (~0.05s)
-  → Format & truncate text (up to 100K chars/session)
-  → SUMMARIZE each session via LLM ← THIS IS THE BOTTLENECK
-  → Return results
-```
-
-## Bottleneck: LLM Summarization, NOT the DB
-
-- **FTS5 query:** ~0.1s on 202 sessions / 7.322 messages / 85MB state.db
-- **LLM calls:** 3 parallel `async_call_llm()` calls to the configured `auxiliary.session_search` model
-- **Each call sends up to 100.000 chars** of conversation transcript for summarization
-- **Timeout:** 360s (configurable via `auxiliary.session_search.timeout`)
-- **Total latency dominated by the SLOWEST of the parallel LLM calls** (typically 5-15s each on OpenRouter)
-
-## Why This Matters
-
-| Claim | Reality |
-|-------|---------|
-| "N100 is too slow for the DB" | DB query is ~0.1s — CPU is irrelevant |
-| "More sessions = slower search" | FTS5 scales well; but more matching sessions = more LLM calls |
-| "Session uses a DB, should be instant" | DB part IS instant; LLM summarization is the hidden cost |
-
-## Config Tuning
-
-### In `~/.hermes/config.yaml`:
-
-```yaml
-auxiliary:
-  session_search:
-    # CHEAPER/FASTER MODEL = faster summarization
-    # From: deepseek/deepseek-v4-flash (what the main chat uses)
-    # To e.g.: google/gemini-2.0-flash-lite, cohere/command-r7
-    provider: openrouter
-    model: google/gemini-2.0-flash-lite  # Much faster for text summarization
-    timeout: 360
-    max_concurrency: 3  # Max parallel LLM calls [1-5]
+```text
+User query
+  → SQLite/FTS session lookup
+  → Load matched messages
+  → Format/snippet or summarize result windows
+  → Return ranked sessions
 ```
 
-### What each knob does:
+The database lookup is usually not the expensive part. User-visible latency often
+comes from summarizing or formatting large matched conversations, especially when
+multiple sessions are processed in parallel by an auxiliary LLM.
 
-| Setting | Effect |
-|---------|--------|
-| `model` | **Biggest lever** — cheaper/faster model = dramatically less latency |
-| `provider` | **Direct API (DeepSeek) vs Relay (OpenRouter)** — OpenRouter addiert mindestens einen HTTP-Hop und ggf. Queue-Zeit. Bei 3 parallelen Calls à ~100K Tokens: bis zu 5-15s extra pro Call. |
-| `max_concurrency: 1` | Sequential summarization, predictable but slower with 3+ matches |
-| `max_concurrency: 5` | More parallelism, but still bound by the slowest call |
-| `timeout` | How long to wait before giving up (default: 360s) |
+## Common bottlenecks
 
-**Provider-Wechsel-Trap:** Wenn du den Main-Provider wechselst (z.B. OpenRouter → DeepSeek), läuft session_search **weiter über den alten Provider**, weil `auxiliary.session_search` seine eigene `provider`/`model`/`base_url`/`api_key`-Konfiguration hat. Siehe `hermes-agent/references/config-traps.md` → Abschnitt "auxiliary.* — Task-Config lebt nicht vom Main-Model".
+| Symptom | Likely cause | First checks |
+|---|---|---|
+| Search is slow only for broad queries | Too many large matched sessions need summaries | Narrow the query or reduce result count |
+| Empty/recent browse is fast, non-empty query is slow | Query path invokes summarization | Check auxiliary/session-search model routing |
+| A known session is absent | Session was not written to the active DB | See `session_search_architecture.md` |
+| Latency changes after model/provider edits | Auxiliary routing differs from the main chat model | Inspect the active Hermes profile config |
 
-### Two Modes
+## Tuning levers
 
-| Mode | Trigger | LLM Call? | Latency |
-|------|---------|-----------|---------|
-| **Recent sessions** | Empty query (`session_search(query="")`) | **No** | ~0.1s |
-| **Search** | Non-empty query | **Yes** (1-3 calls) | 5-45s depending on model |
+Exact config keys are owned by Hermes Agent and may change; verify against the
+active Hermes docs/config before editing. Typical levers are:
 
-The "recent sessions" mode skips LLM entirely and just returns DB metadata. If the user only needs context, suggest an empty query first.
+| Lever | Effect |
+|---|---|
+| Auxiliary model/provider | Biggest latency/cost lever when summaries are generated |
+| Max matched sessions / result limit | Fewer sessions means less summarization work |
+| Per-session transcript/window size | Smaller windows are faster but less complete |
+| Concurrency | More parallelism can help until provider rate limits or slowest-call latency dominates |
+| Timeout | Controls failure behavior, not underlying work cost |
 
-## Source Code Constants
+## Practical triage
 
-In `~/hermes/hermes-agent/tools/session_search_tool.py`:
+1. Prefer Vault/Cortex lookup for durable facts; use `session_search` for raw
+   conversational history.
+2. Use exact phrases or narrower terms before increasing result count.
+3. Compare browse/recent mode with full-text search mode to isolate DB vs summary
+   cost.
+4. Inspect active Hermes config for auxiliary `session_search` routing instead of
+   assuming it follows the main chat model.
+5. If you need hard numbers, measure locally and store them in private runtime
+   notes, not this public repo.
+
+## Quick DB timing pattern
 
 ```python
-MAX_SESSION_CHARS = 100_000       # Line 28 — max transcript chars per session
-MAX_SUMMARY_TOKENS = 10000        # Line 29 — max tokens for summarization
-_HIDDEN_SESSION_SOURCES = ("tool",)  # Line 265 — exclude subagent/tool sessions
-```
+import os
+import sqlite3
+import time
 
-**Tuning tip:** Lowering `MAX_SESSION_CHARS` reduces LLM context → faster summarization at the cost of less complete summaries.
-
-## Checking Current Config
-
-```bash
-grep -A 20 "session_search" ~/.hermes/config.yaml
-```
-
-## Quick DB Performance Test
-
-```python
-python3 -c "
-import sqlite3, os, time
-db = os.path.expanduser('~/.hermes/state.db')
-conn = sqlite3.connect(db)
-
-# Count sessions and messages
-print(f'sessions: {conn.execute(\"SELECT COUNT(*) FROM sessions;\").fetchone()[0]}')
-print(f'messages: {conn.execute(\"SELECT COUNT(*) FROM messages;\").fetchone()[0]}')
-
-# Test FTS query speed
-q = '''
+path = os.path.expanduser('~/.hermes/state.db')
+conn = sqlite3.connect(path)
+query = '''
 SELECT DISTINCT s.id, s.title, s.source, s.started_at
 FROM messages_fts f
 JOIN messages m ON m.rowid = f.rowid
@@ -103,9 +69,8 @@ JOIN sessions s ON s.id = m.session_id
 WHERE messages_fts MATCH ?
 LIMIT 5
 '''
-t0 = time.time()
-results = conn.execute(q, ('test',)).fetchall()
-print(f'FTS query: {time.time()-t0:.3f}s')
+start = time.time()
+rows = conn.execute(query, ('example',)).fetchall()
+print(f'FTS query: {time.time() - start:.3f}s; rows={len(rows)}')
 conn.close()
-"
 ```

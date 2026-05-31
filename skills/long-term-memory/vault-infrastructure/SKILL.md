@@ -28,16 +28,16 @@ Do **not** put raw sessions into the vault. Do **not** put curated knowledge onl
 
 ## Note types and frontmatter
 
-Every note needs YAML frontmatter. Cortex only indexes notes with these fields:
+Every note needs YAML frontmatter. Use the canonical enum tables in `docs/METADATA.md`; do not invent local status values. Cortex indexes notes with these fields:
 
 ```yaml
 ---
-type: fact | decision | project | runbook | map | person
-status: active | archived | draft
+type: fact | decision | project | runbook | map | person | note
+status: active | draft | archived | deprecated | stale | superseded
 tags: [tag1, tag2]
 confidence: high | medium | low
 importance: high | medium | low
-stability: stable | evolving | deprecated
+stability: stable | evolving | experimental
 last_verified: YYYY-MM-DD
 ---
 ```
@@ -64,10 +64,13 @@ Maintain these templates in the vault's `80_templates/`: `fact-note.md`, `decisi
 
 ## Bootstrap
 
-When setting up a new vault, create these first:
+When setting up a new vault, seed public-safe starter notes only. Example shape:
 - `60_maps/Map - Knowledge Index.md`
-- `30_projects/Project - Hermes VM.md`
-- `20_decisions/Decision - Obsidian as long-term memory.md`
+- `30_projects/Project - Example System.md`
+- `20_decisions/Decision - Use a curated vault for long-term memory.md`
+
+Do not put personal machine names, delivery targets, private scheduler state, or
+real account identifiers into tracked seed notes or examples.
 
 ## Cortex runtime layout and lifecycle
 
@@ -75,7 +78,7 @@ Keep these concerns separate:
 
 - `~/.hermes/plugins/cortex/` = plugin code/runtime Git checkout. Update with `git pull --ff-only` (and the install/sync step if the repo requires it). Do not store user config, Chroma data, chunks, or other mutable state here.
 - `~/.hermes/cortex/` = profile-local Cortex config and runtime state (`config.yaml`, chunks, embeddings/vector store, graph artifacts). This location is acceptable because it keeps mutable state out of the plugin repo, but expose it clearly in UX/docs (`hermes cortex status`, `config path/show/edit`) so it does not feel hidden.
-- `~/hermes-workspace/hermes-cortex/` = development checkout.
+- `<workspace>/hermes-cortex/` = development checkout.
 
 Current workflows should use `hermes cortex ...`; remove stale deployment-path instructions instead of preserving legacy compatibility.
 
@@ -86,9 +89,12 @@ There are two live lifecycle mechanisms to keep distinct when auditing Cortex:
 
 ## Nightly Promotion (Cronjob)
 
-A cronjob (`hermes-cortex-nightly-promotion`, job_id `c55272c78fa26773`) runs
-daily at **02:00 UTC** to promote durable knowledge from Hermes sessions into the
-vault. The job is canonical-first:
+Cortex can package a scheduled Hermes job that promotes durable session knowledge
+into the vault. Treat this as an example lifecycle pattern, not evidence of any
+specific operator's scheduler. Tracked docs must not include real job IDs,
+delivery channels, account names, or private notification targets.
+
+The promotion pattern is canonical-first:
 
 - clear, high-confidence facts/decisions/projects/runbooks are written directly
   to `10_facts/`, `20_decisions/`, `30_projects/`, or `40_runbooks/`
@@ -98,22 +104,20 @@ vault. The job is canonical-first:
   and `review_reason`
 - archived source notes must not keep `promote: true`
 
-After writing, the job runs lifecycle maintenance (index, embeddings, graph) and
-sends a Signal summary to the user. For scheduler validation, prefer the
-scheduler/home context because arbitrary worker profiles may show a different
-cron store:
+After writing, a scheduled job should run lifecycle maintenance (index,
+embeddings, graph) and deliver any summary through operator-local/private config.
+For scheduler validation, prefer the scheduler/home context because arbitrary
+worker profiles may show a different cron store:
 
 ```bash
 env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cron list
 env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cortex cron status
 ```
 
-**Session sources scanned by the prompt:**
-- Signal sessions: `~/.hermes/sessions/*.jsonl`
-- TUI sessions: `~/.hermes/sessions/session_*.json`
-- `request_dump_*.json` files are ignored (API dumps, not sessions)
-
-**Pitfall — missing TUI sessions:** The prompt originally only searched `*.jsonl`, which catches Signal sessions but misses all TUI sessions (stored as `session_*.json`). Both globs are required. If the cronjob output shows only 1-2 sessions on a heavy workday, check whether the prompt includes the `session_*.json` glob.
+**Session sources:** Prefer the active Hermes session database when available.
+If a maintenance prompt or legacy workflow reads session log files directly, make
+that source explicit and keep channel-specific names generic, e.g. JSONL logs,
+JSON session logs, and ignored API request dumps.
 
 ## Pitfalls
 
@@ -122,7 +126,8 @@ env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cortex cron status
 - Do not let legacy vault paths survive a cutover
 - Do not run `install.sh` as root
 - **When asked to audit, fix, or geradeziehen the cortex setup:** code changes come first, documentation is the follow-up. Never produce only docs while leaving the actual project code untouched.
-- **Nightly promotion cron:** When editing the cronjob prompt, ensure it searches both `*.jsonl` (Signal) and `session_*.json` (TUI). The jsonl-only trap caused 20+ TUI sessions to be silently skipped for weeks.
+- **Nightly promotion cron:** Keep scheduler prompts public-safe. Do not document real job IDs, delivery targets, or private channel names in tracked repo docs.
+- **Session sources:** Prefer the active Hermes session database. If reading logs directly, describe sources generically and verify that both JSONL and JSON session formats are covered when relevant.
 - For systematic cortex health checks, see `references/cortex-health-check.md`.
 - For config-path and hook-debugging deep-dive (search order, timing traps, log verification), see `references/cortex-config-debugging.md`.
-- For full setup workflow beyond this skill, see the repo's `SETUP.md`.
+- For setup and CLI workflow, see the repo `README.md` and `docs/CLI.md`.

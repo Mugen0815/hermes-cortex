@@ -1,89 +1,69 @@
-# vault_search Ranking-Diagnose: Warum eine existierende Note nicht gefunden wird
+# vault_search Ranking Diagnostic
+
+This public reference explains why an existing note may not appear in a small
+`vault_search` result window. Keep real note names, local paths, scores, and
+one-off search transcripts in private operator notes.
 
 ## Problem
 
-vault_search meldet keine Treffer für eine **bekannt existierende** Vault-Note.
+A specific known note exists on disk and is indexed, but `vault_search(...,
+top_k=10)` does not return it.
 
-Beispiel: `vault_search("Project hermes-cortex", top_k=10)` findet die Note nicht,
-obwohl sie auf der Festplatte existiert und 14 Chunks im Index hat.
+## Cause
 
-## Ursache
+BM25 can strongly favor short, exact wikilink chunks over the long target note.
+For example, many notes may contain a compact link such as:
 
-BM25 bevorzugt **kurze, präzise Chunks** massiv. Die "Links"-Sektionen in anderen Notes
-enthalten `"- [[Project - hermes-cortex]]"` — das sind ~30 Zeichen, beide Suchbegriffe
-dicht beieinander, perfekter BM25-Score. Die eigentliche Project-Note hat 294 Zeilen
-technischen Text — BM25 "verdünnt" darüber.
-
-Bei top_k=10 gewinnen die kurzen Wikilink-Chunks, die Ziel-Notiz fliegt raus.
-
-## 4-Stufen-Diagnose
-
-### Stufe 1 — Höheres top_k
-
-```python
-vault_search("Project hermes-cortex", top_k=30)
+```markdown
+- [[Project - Example System]]
 ```
 
-Trotzdem nicht gefunden? → Stufe 2.
+That tiny chunk can score better than the full project note because the query
+terms are close together and not diluted across a long body. In a small `top_k`,
+short link/index chunks can crowd out the intended long-form note.
 
-### Stufe 2 — Dateisystem-Ebene
+## Four-step diagnosis
+
+### 1. Raise `top_k`
 
 ```python
-search_files(pattern="*hermes-cortex*", target="files")
-# → ["/home/.../vault/30_projects/Project - hermes-cortex.md"]
+vault_search("Project Example System", top_k=30)
 ```
 
-Liefert den Dateipfad, **umgeht den Index komplett**. Der schnellste Weg um zu
-prüfen ob eine Datei existiert.
+Still absent? Continue.
 
-### Stufe 3 — Index-Prüfung
+### 2. Verify the file exists
+
+```python
+search_files(pattern="*Example System*", target="files", path="/path/to/vault")
+```
+
+Filesystem search bypasses the index entirely and is the fastest existence check.
+
+### 3. Check index membership
 
 ```bash
-grep '"file": "30_projects/Project - hermes-cortex.md"' ~/.hermes/cortex/chunks.jsonl | wc -l
-# → 14 (Chunks vorhanden, Datei ist indiziert)
+grep '"file": "30_projects/Project - Example System.md"' ~/.hermes/cortex/chunks.jsonl | wc -l
 ```
 
-Wenn 0: Datei wurde beim letzten `cortex index` übersprungen (Frontmatter-Probleme,
-Ausschluss-Regel, zu große Datei?).
+If the count is `0`, rebuild or inspect frontmatter/exclusion rules. If chunks
+exist but search still misses the note, this is ranking behavior rather than an
+indexing miss.
 
-### Stufe 4 — Akzeptieren + Direktzugriff
+### 4. Read the note directly
 
 ```python
-vault_read_note(file="30_projects/Project - hermes-cortex.md")
+vault_read_note(file="30_projects/Project - Example System.md")
 ```
 
-Wenn die Datei indiziert ist (Stufe 3 bestätigt), aber nicht rankt: **Limitation
-akzeptieren**. BM25 + Embedding-Vector können eine lange Note nicht zuverlässig
-finden, wenn kurze Wikilink-Chunks dominieren. Direktzugriff ist der Weg.
+For known specific notes, direct read is valid after filesystem/index checks.
+Search is for discovery; it is not a guarantee that every known long-form note
+will appear in a small result window. Charming, in the way ranking systems are.
 
-## Ranking-Detail
+## Prevention
 
-Ausgabe von `cortex search "Project hermes-cortex" --top-k 30`:
-
-```
-   1. [0.0237] Fact - Cortex Hermes Plugin Entry-Point Integration.md :: Links
-      (bm25#8, vec#4)           ← "- [[Project - hermes-cortex]]" (kurz!)
-   2. [0.0221] Fact - Cortex Graph Diagnostics... :: Links
-      (bm25#11, vec#10)         ← "- [[Project - hermes-cortex]]" (kurz!)
-   ...
-   7. [0.0183] Project - Hermes VM.md :: 4. Cortex / 4.1 Projekt
-      (bm25#33, vec#19)
-   ...
-   Project - hermes-cortex.md : NICHT IN TOP-30
-```
-
-Die Scores liegen alle dicht beieinander (0.018–0.024). Die kurzen Wikilink-Chunks
-gewinnen knapp, weil BM25 dort perfekt matched.
-
-## Prävention
-
-- **Immer `top_k=20+`** bei Suche nach einer bestimmten Notiz
-- Bei Namenssuche: `search_files(target="files")` als ersten Schritt, nicht vault_search
-- vault_search ist gut für **semantische Suche** — "was weißt du über X?"
-- vault_search ist **schlecht** für "existiert Datei Y?" — dafür Dateisystem nehmen
-
-## Links
-
-- `memory-diagnostics` Skill → Abschnitt "vault_search false negatives"
-- `cortex.config._CONFIG_SEARCH_PATHS` in `src/cortex/config.py`
-- `cortex.plugin._resolve_state()` in `src/cortex/plugin.py`
+- Use `top_k=20+` when searching for a specific note title.
+- Pair `vault_search` with `search_files(target="files")` for exact filename/title
+  lookups.
+- Prefer `vault_read_note` once the path is known.
+- Keep short map/link notes useful, but do not mistake them for canonical content.

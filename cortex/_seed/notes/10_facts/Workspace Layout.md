@@ -19,13 +19,13 @@ stability: stable
 # Workspace Layout
 
 ## Summary
-`~/hermes-workspace/` holds active project work. It is distinct from
-any optional versioned infrastructure checkout and `~/.hermes/` (Hermes runtime).
+A workspace directory holds active project work. It is distinct from any optional
+versioned infrastructure checkout and from the Hermes runtime/config directory.
 
 ## Structure
 
 ```
-~/hermes-workspace/
+<workspace>/
 ├── vault/               curated Obsidian vault (cortex-managed)
 └── hermes-cortex/       cortex source repo
 ```
@@ -34,14 +34,14 @@ any optional versioned infrastructure checkout and `~/.hermes/` (Hermes runtime)
 
 | Type | Location |
 |---|---|
-| Active project repos | `~/hermes-workspace/<project>/` |
-| Curated knowledge | `~/hermes-workspace/vault/` |
+| Active project repos | `<workspace>/<project>/` |
+| Curated knowledge | configured vault path |
 | Versioned infra | user-defined project path |
-| Hermes runtime / config | `~/.hermes/` |
-| Throwaway downloads | NOT in `~` directly — pick a purposeful subdir |
+| Hermes runtime / config | active Hermes home/profile |
+| Throwaway downloads | purposeful scratch directory, not the repo root |
 
 ## Rules
-- Keep `~/hermes-workspace/` organized by purpose, not dumped into `~`.
+- Keep the workspace organized by purpose, not dumped into a home directory.
 - One repo per directory. No nested checkouts.
 
 ## Related

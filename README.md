@@ -349,16 +349,16 @@ The short version:
 
 ```yaml
 ---
-type: fact | decision | project | runbook
-status: active | archived | draft | superseded
+type: fact | decision | project | runbook | map | person | note
+status: active | draft | archived | deprecated | stale | superseded
 tags: [memory, retrieval]
 confidence: high        # or numeric 0..1
 importance: medium      # or numeric 1..5
-stability: stable | evolving | deprecated
+stability: stable | evolving | experimental
 ---
 ```
 
-Full schema: [`docs/METADATA.md`](docs/METADATA.md).
+Full schema and canonical enum tables: [`docs/METADATA.md`](docs/METADATA.md).
 
 ## Update
 

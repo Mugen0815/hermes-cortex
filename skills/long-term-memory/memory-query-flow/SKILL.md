@@ -75,9 +75,10 @@ When writing to the Vault:
    names or suspicious search results.
 2. Update an existing matching note instead of creating a duplicate.
 3. Write/update `vault/<folder>/<file>.md` with valid frontmatter.
-4. Use only known `status` values: `active`, `draft`, `archived`, `deprecated`,
-   `stale`, or `superseded`. Put workflow labels like `approved` or
-   `implemented` in separate fields.
+4. Use only canonical `status` values from `docs/METADATA.md`: `active`,
+   `draft`, `archived`, `deprecated`, `stale`, or `superseded`. Put workflow
+   labels like `proposed`, `planned`, `approved`, or `implemented` in separate
+   fields.
 5. Run `cortex index`; if it fails, report the exact error and stop.
 6. Run `cortex embed`; if it fails, report the exact error and stop.
 7. Link from `60_maps/Map - Knowledge Index.md` when the note should be discoverable

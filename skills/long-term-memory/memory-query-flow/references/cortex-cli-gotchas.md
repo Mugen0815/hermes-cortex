@@ -30,7 +30,7 @@ Preferred workflow:
 
 ```bash
 # Develop in source repo
-cd ~/hermes-workspace/hermes-cortex
+cd /path/to/hermes-cortex
 # ... make code changes ...
 git add ... && git commit && git push
 

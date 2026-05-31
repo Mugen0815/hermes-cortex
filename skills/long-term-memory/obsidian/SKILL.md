@@ -25,14 +25,14 @@ The **closing `---` delimiter is required** — without it the parser treats the
 
 ```yaml
 ---
-type: fact | decision | project | runbook | map | person
-status: active | draft | archived | deprecated | stale | superseded   # use `archived` for finished/retired projects; `completed` is invalid and triggers cortex warnings
+type: fact | decision | project | runbook | map | person | note
+status: active | draft | archived | deprecated | stale | superseded   # canonical values; see docs/METADATA.md
 domain: infrastructure | operations | workflow | tools | software  # optional but recommended
 tags: [tag1, tag2]
 aliases: [alternativer_name]                                       # optional, enables redirects
 confidence: high | medium | low
 importance: high | medium | low
-stability: stable | evolving | deprecated | draft
+stability: stable | evolving | experimental
 last_verified: YYYY-MM-DD
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -71,8 +71,10 @@ cortex_promote: true             # alternative to promote: true
 `promote_type` maps: `fact`→`10_facts`, `decision`→`20_decisions`, `project`→`30_projects`, `runbook`→`40_runbooks`.
 These fields are stripped from the canonified note during promotion.
 
-Do not use `status: review`; it is not a known Cortex status. Do not leave an
-archived source note promotable:
+Do not use workflow labels like `status: review`, `status: proposed`, or
+`status: planned`; they are not canonical Cortex statuses. Store workflow state
+in fields such as `review_status` or `roadmap_phase`. Do not leave an archived
+source note promotable:
 
 ```yaml
 status: archived
@@ -90,7 +92,7 @@ See [[Runbook - Promote session knowledge]] for details.
 Use `related:` in frontmatter for structured cross-references:
 
 ```yaml
-related: ['[[Runbook - Promote session knowledge]]', '[[Project - Hermes VM]]']
+related: ['[[Runbook - Promote session knowledge]]', '[[Project - Example System]]']
 ```
 
 ### Renaming or archiving notes

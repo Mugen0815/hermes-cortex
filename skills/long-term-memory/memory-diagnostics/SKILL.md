@@ -75,6 +75,9 @@ Reference:
 - `skills/long-term-memory/memory-query-flow/references/session_search_performance.md`
 - `skills/long-term-memory/memory-query-flow/references/session_search_architecture.md`
 
+Keep real local DB sizes, session counts, provider timings, and private config
+values in operator-private notes, not in these public references.
+
 ## 4. Cortex CLI/index/embed gotchas
 
 `cortex index` and `cortex embed` do **not** accept `--path`; they read the Vault

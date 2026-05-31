@@ -2,40 +2,63 @@
 
 ## Missing closing `---` delimiter
 
-**Symptom:** Graph viewer shows "suspicious memory" flags: "missing status", "missing domain" for notes that clearly have those fields in their YAML.
+**Symptom:** Graph viewer shows "suspicious memory" flags such as "missing
+status" or "missing domain" for notes that visibly contain those fields in YAML.
 
-**Root cause:** The file has an opening `---` but no closing `---` before the body begins. The cortex parser regex (`^---[ \t]*\n(.*?)\n---[ \t]*\n`) requires both delimiters. Without a closing `---`, it returns an empty frontmatter dict.
+**Root cause:** The file has an opening `---` but no closing `---` before the
+body begins. The cortex parser regex (`^---[ \t]*\n(.*?)\n---[ \t]*\n`)
+requires both delimiters. Without a closing `---`, it returns an empty
+frontmatter dict.
 
-**Real-world example (May 2026):** Three notes in the vault:
-- `10_facts/Hermes TTS Stimme.md` — frontmatter content present, no closing `---`
-- `10_facts/Hermes Vision Limitation.md` — same
-- `10_facts/Integration - Audio STT und YouTube.md` — no frontmatter at all (started with `# Title`)
+**Example pattern:** A note starts with YAML-like fields and then immediately
+continues into Markdown content without the second delimiter.
 
 **Fix:**
 1. Verify with `python3 -c "import re; text=open('path/to/file.md').read(); print(bool(re.search(r'^---[ \t]*\n(.*?)\n---[ \t]*\n', text, re.DOTALL)))"` — should print `True`
 2. Add `---` as the line between frontmatter and body
 3. `cortex index --force && cortex graph build --force` to rebuild
 
-## Unknown status values
+## Unknown enum values
 
-The `cortex frontmatter` module validates against known enums. Known status values:
-- `active`, `archived`, `draft`, `proposed`, `planned`
+The `cortex.frontmatter` module validates enum-like fields against the canonical
+schema documented in `docs/METADATA.md`. Current public status values are:
 
-Non-standard values like `"proposed"` or `"planned"` (previously unseen) produce a warning during indexing:
-```
+- `active`
+- `draft`
+- `archived`
+- `deprecated`
+- `stale`
+- `superseded`
+
+Values such as `proposed`, `planned`, `approved`, `implemented`, or `review` are
+workflow labels, not canonical `status` values. They produce a non-fatal warning
+and may not appear correctly in status filters:
+
+```text
 unknown status 'proposed'
 unknown status 'planned'
-unknown stability 'draft'
 ```
 
-These warnings are **non-fatal** — the note is still indexed — but the graph viewer's status filter won't recognise them.
+Use a canonical `status` and move workflow state into a separate field, for
+example:
+
+```yaml
+status: draft
+review_status: pending
+roadmap_phase: planned
+```
+
+Canonical `stability` values are `stable`, `evolving`, and `experimental`. Do not
+use `draft` or `deprecated` as `stability`; lifecycle belongs in `status`.
 
 ## Quoted dates in frontmatter
 
-Dates with quotes (`last_verified: '2026-05-05'`) are valid YAML but may cause issues with some frontmatter parsers that expect unquoted ISO dates. Cortex handles them, but for compatibility prefer unquoted:
+Dates with quotes (`last_verified: '2026-05-05'`) are valid YAML but may cause
+issues with some frontmatter parsers that expect unquoted ISO dates. Cortex
+handles them, but for compatibility prefer unquoted:
 
 ```yaml
-last_verified: 2026-05-05  # preferred
+last_verified: 2026-05-05    # preferred
 last_verified: '2026-05-05'  # also works but may confuse some parsers
 ```
 

@@ -1,59 +1,64 @@
 # session_search Architecture
 
-> Discovered while debugging why a known session wasn't found by session_search (May 2026).
+This is a public, stable reference for how Hermes `session_search` works. Keep
+local database sizes, session counts, provider choices, and one-off incident data
+in private operator notes instead of this tracked repo.
 
 ## How it works
 
-`session_search` does **not** read JSON/JSONL files directly. It queries a **SQLite database with FTS5 full-text search**.
+`session_search` queries the Hermes session database, not the raw JSON/JSONL log
+files directly. The database uses SQLite plus FTS5 full-text indexes for message
+lookup.
 
 ### Database
 
-- **Path:** `~/.hermes/state.db` (~74 MB as of May 2026)
-- **Class:** `SessionDB` in `hermes_state.py`
-- **Tables:** `sessions`, `messages`, `messages_fts` (FTS5 virtual table), `messages_fts_trigram`
-- **Triggers:** FTS5 index is auto-populated via `AFTER INSERT` triggers on `messages`
+- **Typical path:** `~/.hermes/state.db` for the active Hermes home/profile
+- **Core tables:** `sessions`, `messages`, and FTS-backed message indexes
+- **Write path:** runtime message inserts populate the search indexes through DB
+  triggers or equivalent Hermes state-management code
 
-### Write path
+The exact schema belongs to Hermes Agent itself and may change. Treat the table
+names above as an integration contract only when verified against the active
+Hermes version.
 
-All session messages are INSERTed into the `messages` table at runtime. The FTS5 triggers automatically update the full-text index. This is the **only** data path to session_search — there is no batch import from `.json`/`.jsonl` files.
+### JSON/JSONL logs vs database
 
-### Known gap
-
-The `sessions/` directory contains ~268+ `.json` session files, but `state.db` only has ~185 sessions indexed. This means:
-
-- **Not all sessions that produce a `.json` log file end up in `state.db`**
-- This can happen if the session ran in a context where the DB wasn't written to (early termination, different Hermes instance, UI mode that logs to file but not DB)
-- `sessions.json` is a registry/index of **active/recent sessions only** — not a full-text index
+The `sessions/` directory can contain logs that are not present in the database,
+and `sessions.json` may be a registry of active/recent sessions rather than a
+complete full-text index. If a known conversation is missing from `session_search`,
+check whether the active Hermes process wrote it to the DB before assuming search
+ranking failed.
 
 ### Checking the DB directly
 
+Use this only for diagnostics, and run it against the intended Hermes home/profile:
+
 ```python
-python3 -c "
+import os
 import sqlite3
-db = sqlite3.connect(os.path.expanduser('~/.hermes/state.db'))
 
-# Check if a specific session is in the DB
-row = db.execute('SELECT id, started_at, source FROM sessions WHERE id=?', ('SESSION_ID',)).fetchone()
+path = os.path.expanduser('~/.hermes/state.db')
+db = sqlite3.connect(path)
 
-# List recent sessions
-rows = db.execute('SELECT id, started_at, source FROM sessions ORDER BY started_at DESC LIMIT 5').fetchall()
+# Check if a specific session is in the DB.
+row = db.execute(
+    'SELECT id, started_at, source FROM sessions WHERE id=?',
+    ('SESSION_ID',),
+).fetchone()
 
-# Count by source
+# List recent sessions.
+rows = db.execute(
+    'SELECT id, started_at, source FROM sessions ORDER BY started_at DESC LIMIT 5'
+).fetchall()
+
+# Count by source.
 rows = db.execute('SELECT source, COUNT(*) FROM sessions GROUP BY source').fetchall()
-"
 ```
 
-### Schema
+## Diagnostic checklist
 
-```
-sessions:  id, started_at, source, model, platform, meta
-messages:  id, session_id (FK), role, content, timestamp, tool_name
-messages_fts:  rowid=FK to messages, content (FTS5 unicode61 tokenizer)
-messages_fts_trigram:  rowid=FK to messages, content (FTS5 trigram tokenizer for CJK)
-```
-
-### Write contention
-
-- WAL journal mode + `BEGIN IMMEDIATE` for writes
-- Retry with random jitter (20-150ms) on lock contention
-- CHECKPOINT every 50 writes
+- Confirm which Hermes home/profile owns `state.db`.
+- Confirm the session exists in `sessions` before debugging search ranking.
+- If the session exists but no messages match, inspect the FTS index/write path.
+- If the session exists only as a JSON/JSONL log, use log inspection or import tooling
+  if Hermes provides it; `session_search` cannot find data that was never indexed.

@@ -39,10 +39,10 @@ legacy mutation paths are explicitly opt-in.
   indexed; new configs use semantic hook blocks and static bootstrap files.
 
 ## Key Paths
-- Repo: `https://github.com/Mugen0815/hermes-cortex.git`
-- Local checkout: `~/hermes-workspace/hermes-cortex/`
-- Vault: `~/hermes-workspace/vault/`
-- Docs: `hermes-cortex/docs/{ARCHITECTURE,METADATA,ROADMAP}.md`
+- Repo: the checked-out `hermes-cortex` source repository
+- Runtime plugin checkout: operator-defined Hermes plugin path
+- Vault: operator-defined Cortex vault path from the active config
+- Docs: `docs/ARCHITECTURE.md`, `docs/METADATA.md`, and `docs/CLI.md`
 
 ## Stack
 | Component | Choice |

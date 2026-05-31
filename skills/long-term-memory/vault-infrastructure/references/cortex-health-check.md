@@ -9,10 +9,10 @@ verify these four dimensions systematically:
 # Runtime plugin checkout
 cd ~/.hermes/plugins/cortex && git rev-parse --short HEAD && git status --short --branch
 # Dev/source clone
-cd ~/hermes-workspace/hermes-cortex && git rev-parse --short HEAD && git status --short --branch
+cd /path/to/hermes-cortex && git rev-parse --short HEAD && git status --short --branch
 # Check for unpushed commits in each checkout
 cd ~/.hermes/plugins/cortex && git log --oneline origin/main..HEAD
-cd ~/hermes-workspace/hermes-cortex && git log --oneline origin/main..HEAD
+cd /path/to/hermes-cortex && git log --oneline origin/main..HEAD
 ```
 
 Both clones should be on the same commit and `main` branch.

@@ -52,7 +52,8 @@ git diff --check
 The GitHub Actions workflow in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 runs the package install, Ruff, pytest, and `python -m build --no-isolation` on
 Python 3.11 and 3.12 for pushes and pull requests targeting `main`. CI runners do
-not carry Dennis' live Hermes profile, so the workflow can use plain `pytest`.
+not carry a developer's live Hermes profile, so the workflow can use plain
+`pytest`.
 
 For a quick runtime-oriented smoke after a docs/skill-only change, the full test
 suite may be overkill, but at minimum run:

@@ -5,9 +5,9 @@ description: "Retrieval procedure for the agent's memory system — lookup order
 
 # Memory Query Flow
 
-## Status — Runtime skill bootstrap is configuration-controlled (2026-05-31)
+## Status — Runtime skill bootstrap is configuration-controlled
 
-Current post-P8 Cortex runtime uses semantic hook blocks. In the standard deployed
+Current Cortex runtime uses semantic hook blocks. In the standard deployed
 configuration, this skill is intentionally injected every turn through:
 
 ```yaml
@@ -69,7 +69,7 @@ The vault exists specifically to cache the answers you'd otherwise have to grep 
 
 1. Older configs used `hooks.context_injection.load_skill`, and some historical
    docs said `load_skill: false` meant this skill was no longer auto-loaded.
-2. Post-P8 configs use semantic hook blocks. The effective switch is now
+2. Current configs use semantic hook blocks. The effective switch is now
    `hooks.skill_context.enabled` + `hooks.skill_context.load_skill`.
 3. If that semantic block is enabled, `memory-query-flow` is injected every turn
    even when the legacy `context_injection` block is disabled or ignored.

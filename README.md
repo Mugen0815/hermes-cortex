@@ -7,19 +7,18 @@
 
 Cortex-backed vault memory for [Hermes Agent](https://hermes-agent.nousresearch.com).
 
-`hermes-cortex` indexes a Markdown / Obsidian-style vault and exposes three
-Hermes tools: search notes, read notes, and build compact prompt context. The
-operator-facing CLI is available as `hermes cortex ...` once the plugin is
-enabled.
+`hermes-cortex` indexes a Markdown / Obsidian-style vault and exposes it to
+Hermes as tools, lifecycle hooks, and an operator CLI. The normal user-facing
+command surface is `hermes cortex ...` once the plugin is installed and enabled.
 
 ## What this is
 
 - A standalone Hermes plugin loaded from `~/.hermes/plugins/cortex/`
 - A local vault indexer for Markdown notes
 - Hybrid retrieval: BM25 + vector embeddings + wikilink graph expansion
-- A context builder that returns source-cited Markdown within a token budget
-- A maintenance CLI for index, embeddings, graph artifacts, lifecycle checks,
-  and static graph viewer generation
+- Hermes tools: `vault_search`, `vault_read_note`, `vault_build_context`
+- A maintenance CLI for indexing, embeddings, graph artifacts, lifecycle checks,
+  cron packaging, and graph viewer generation
 
 ## What this is not
 
@@ -34,7 +33,7 @@ enabled.
 Hermes Agent
   └─ cortex plugin
        ├─ tools: vault_search, vault_read_note, vault_build_context
-       ├─ hooks: session/context helpers
+       ├─ hooks: skill/bootstrap/recent/dynamic context helpers
        └─ CLI: hermes cortex ...
              │
              ▼
@@ -64,9 +63,7 @@ hermes tools enable cortex
 ./install.sh --with-hermes-venv --with-hermes-skills
 ```
 
-Initialize the vault config and build the retrieval artifacts. Fresh init is
-idempotent and does not mutate `SOUL.md`, `MEMORY.md`, or `USER.md` by default;
-legacy memory-file mutation stays opt-in only.
+Initialize the vault config and build retrieval artifacts:
 
 ```bash
 hermes cortex init --yes
@@ -75,8 +72,12 @@ hermes cortex embed
 hermes cortex graph build
 ```
 
+Fresh init is idempotent and does not mutate `SOUL.md`, `MEMORY.md`, or
+`USER.md` by default. Legacy memory-file mutation is opt-in only through explicit
+`hermes cortex init` flags.
+
 Start a new Hermes session after first install. Existing sessions cache their
-tool list; `/reset` or a full restart is the boring but correct fix.
+tool list, so `/reset` or a full restart is the boring but correct fix.
 
 ## Verify
 
@@ -84,6 +85,7 @@ tool list; `/reset` or a full restart is the boring but correct fix.
 hermes plugins list
 hermes tools list
 hermes cortex --help
+hermes cortex status
 hermes cortex search "memory-query-flow" --top-k 3
 scripts/smoke-runtime-cortex-cli.sh
 ```
@@ -92,230 +94,64 @@ Expected:
 
 - plugin `cortex` is enabled
 - toolset `cortex` exposes `vault_search`, `vault_read_note`, `vault_build_context`
-- `hermes cortex --help` includes `search-eval`
+- `hermes cortex --help` lists the Cortex CLI commands
 - `hermes cortex search ...` returns vault results after `index` + `embed`
-- `scripts/smoke-runtime-cortex-cli.sh` confirms `hermes cortex search-eval --json --allow-failures` returns the eval JSON envelope (`schema_version`, `case_count`, `passed`, `failed`, `cases`)
+- `scripts/smoke-runtime-cortex-cli.sh` confirms the eval JSON envelope for
+  `hermes cortex search-eval --json --allow-failures`
 
-## Frontmatter validation
-
-`hermes cortex validate-frontmatter` is read-only. It parses YAML frontmatter,
-checks required vault metadata, and does not rewrite notes.
+## Quick start
 
 ```bash
-hermes cortex validate-frontmatter --json
-hermes cortex validate-frontmatter --path '30_projects/Project - hermes-cortex.md'
+# Search the vault from the shell
+hermes cortex search "project architecture" --top-k 10
+
+# Build cited Markdown context for an LLM prompt
+hermes cortex context "how does memory promotion work?" --budget 4000
+
+# Validate vault metadata
 hermes cortex validate-frontmatter --strict
+
+# Rebuild all derived artifacts
+hermes cortex lifecycle maintenance
 ```
 
-Behavior:
+Inside Hermes, use the plugin tools through the `cortex` toolset:
 
-- default exit code is `0` when only warnings are present
-- any validation error returns exit code `1`
-- `--strict` upgrades warnings to exit code `1`
-- `--json` prints a stable report with `schema_version`, `vault_path`, `checked_count`, `error_count`, `warning_count`, and per-file `issues`
-- `--path` limits scope to specific note or directory paths inside the vault
-
-Common issue codes include `missing_frontmatter`, `yaml_parse_error`, `missing_required`, `missing_domain`, and `normalization_warning`.
-
-## Update
-
-Runtime updates are Git-only. No copy, rsync, generated stub, or symlink farm. Keep your development checkout and active runtime plugin checkout (`~/.hermes/plugins/cortex/`) separate; pushing a development repo does not update `hermes cortex ...` until the runtime checkout is pulled.
-
-```bash
-cd ~/.hermes/plugins/cortex
-git fetch origin --prune
-git pull --ff-only origin main
-./install.sh --with-hermes-venv --with-hermes-skills
-scripts/smoke-runtime-cortex-cli.sh
-```
-
-Then start a new Hermes session or `/reset` the current one. Hook code/config is
-process-local: already-started TUI sessions, gateway processes, and Kanban
-workers can retain old hook behavior until they start a new session/process or an
-operator-approved restart picks up the updated plugin checkout/config.
+| Tool | Purpose |
+|---|---|
+| `vault_search` | Hybrid search over indexed notes |
+| `vault_read_note` | Read a full note, optionally limited to a heading path |
+| `vault_build_context` | Build a cited Markdown context blob under a token budget |
 
 ## Common commands
 
 | Command | Purpose |
 |---|---|
-| `hermes cortex init --yes` | Create config, vault folders, and seed notes without mutating Hermes memory files by default |
+| `hermes cortex init --yes` | Create config, vault folders, and seed notes using defaults |
+| `hermes cortex init --dry-run` | Preview init actions without writing files |
 | `hermes cortex index [--force]` | Chunk vault notes into `chunks.jsonl` |
 | `hermes cortex embed [--force]` | Build/update Chroma embeddings |
-| `hermes cortex graph build [--force]` | Build wikilink graph artifacts |
-| `hermes cortex validate-frontmatter [--json] [--strict] [--path ...]` | Read-only Vault frontmatter validation |
 | `hermes cortex search "query" --top-k 20` | Search the vault from the shell |
-| `hermes cortex search-eval --output search-eval-baseline.json --baseline baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason); `--baseline` adds compare summary and baseline deltas |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
-| `hermes cortex config path` | Show active config path |
-| `hermes cortex config show` | Show effective config: vault, index, hooks, skill path, and hook lifecycle rows |
-| `hermes cortex status` | Show plugin/code path plus config, vault, index state, and effective hook lifecycle/status |
+| `hermes cortex validate-frontmatter --strict` | Validate vault note metadata |
+| `hermes cortex status` | Show plugin/code path, config, vault, index, graph, and hook status |
+| `hermes cortex config path` | Print the active Cortex config path |
+| `hermes cortex config show` | Print effective config and hook lifecycle summary |
+| `hermes cortex graph build [--force]` | Build wikilink graph artifacts |
 | `hermes cortex graph status` | Show graph health and diagnostics |
+| `hermes cortex graph broken` | List unresolved or ambiguous links |
+| `hermes cortex graph export --format d3-json -o graph_data.json` | Export graph data |
 | `hermes cortex graph viewer -o graph.html --embed-data` | Generate a static graph viewer |
 | `hermes cortex lifecycle maintenance` | Run index → embed → graph build |
-| `hermes cortex lifecycle nightly --dry-run` | Preview explicit `00_inbox/` review-candidate promotion/cleanup |
-| `hermes cortex lifecycle weekly --dry-run` | Print the read-only WeeklyReview Markdown report |
+| `hermes cortex lifecycle nightly --dry-run` | Preview explicit `00_inbox/` promotion/cleanup |
+| `hermes cortex lifecycle weekly --dry-run` | Print a read-only WeeklyReview report |
+| `hermes cortex session-sources --lookback-days 1` | Inspect recent Hermes sessions for promotion inputs |
 | `hermes cortex cron status` | Check all installed Cortex cron jobs |
-| `hermes cortex cron status --job nightly` | Check only the nightly promotion cron job |
-| `hermes cortex cron status --job weekly` | Check only the WeeklyReview cron job |
+| `hermes cortex cron install --job nightly` | Install/update the configured nightly promotion job |
+| `hermes cortex cron install --job weekly` | Install/update the configured weekly review job |
+| `hermes cortex reset --all --yes` | Delete rebuildable chunks/vector state |
 
-## Hook lifecycle status
-
-`cortex config show` and `cortex status` now print an operator-facing hook
-lifecycle table. It separates lifecycle phases from legacy projection fields:
-
-- `cache_warm` runs at `session_start` and only warms process-local cache.
-- `skill_bootstrap`, `static_file_bootstrap`, `recent_context`, and
-  `dynamic_context` describe `pre_llm` user-message hook context.
-- `recent_context` is deterministic SessionDB metadata context: it reads session
-  titles/sources/timestamps only, never transcript/message bodies and never calls
-  an LLM. It defaults to `source: sessiondb` with `cron` and `api_server`
-  excluded.
-- `legacy_context_injection` is still displayed for compatibility. In a
-  legacy-only config it is `legacy-active`; when any semantic hook block is
-  configured it is `legacy-ignored` and the skipped reason says why. If absent,
-  it is shown as `legacy-absent`.
-
-The table shows `enabled`, `effective`, timing (`first_turn`, `each_turn`, or
-`session_start`), origin, source, payload, target, and skipped reason. Supported
-`when` values are validated per block: `skill_context` accepts `first_turn` or
-`each_turn`; `bootstrap_context` and `recent_context` accept only `first_turn`;
-`dynamic_context` accepts only `each_turn`.
-
-The lifecycle table describes behavior for sessions/processes that loaded the
-current plugin code and config. Already-running TUI sessions, Hermes gateway
-processes, and Kanban workers may retain older hook code/config until a new
-session/process starts or an operator-approved restart is performed.
-
-## Embedding cache hygiene
-
-P8 is now documented as explicit cache/reuse plumbing instead of silent hope:
-
-- `embeddings.cache_folder` makes the SentenceTransformer cache path visible.
-- `embeddings.local_files_only` is `auto` by default, so a warm cache can be
-  reused without pretending the network is magical; explicit `true` forces
-  offline-only behavior.
-- `embedding_manifest.json` is the sidecar next to the Chroma store that holds
-  model/dim metadata for skip decisions.
-- `cortex embed` / `hermes cortex status` report whether the model was reused
-  and which cache mode is active. No `HF_TOKEN` is required, and token values
-  are not logged.
-- HF / SentenceTransformer warning spam is deduped across the logger tree,
-  including child loggers, so the unauthenticated warning shows once instead of
-  being spammed like it wants a bigger budget.
-
-## Nightly promotion lifecycle
-
-The nightly promotion job is **canonical-first**:
-
-- Clear, high-confidence durable knowledge is written directly to the canonical
-  vault folders: `10_facts/`, `20_decisions/`, `30_projects/`, `40_runbooks/`.
-- `00_inbox/` is only for uncertain, duplicate-sensitive, or human-review cases.
-- Active inbox candidates use explicit review metadata:
-  `status: draft`, `review_status: pending`, and `review_reason: "..."`.
-- Archived source notes must not remain promotable. In other words,
-  `status: archived` + `promote: true` is an invalid state.
-
-`cortex lifecycle nightly` still exists for explicit inbox candidates and safe
-cleanup, but the normal cron prompt should not use `00_inbox/` as a staging dump.
-After vault writes, run `hermes cortex lifecycle maintenance` to refresh index,
-embeddings, and graph artifacts.
-
-The packaged cron job is configured under `cron.nightly_promotion` in the active
-Cortex config. Repo defaults are intentionally public-safe and do **not** install jobs unless you explicitly opt in:
-
-```yaml
-cron:
-  nightly_promotion:
-    enabled: false
-    name: hermes-cortex-nightly-promotion
-    schedule: "0 2 * * *"
-    timezone: Europe/Berlin
-    deliver: origin
-    enabled_toolsets: [file, terminal]
-    lookback_days: 1
-    session_globs:
-      - ~/.hermes/sessions/*.jsonl
-      - ~/.hermes/sessions/session_*.json
-    dry_run_first: true
-```
-
-`dry_run_first: true` (the default) makes the cron prompt include a `lifecycle nightly --dry-run` step before the `--write` apply step, so the LLM reviews what would be promoted before writing. Set to `false` to skip the dry run and go straight to apply. Both modes still run `lifecycle maintenance` (index → embed → graph) after writing.
-
-Nightly/session promotion is now SessionDB-primary on the ticket branch: the live contract reads `~/.hermes/state.db` first, falls back to legacy JSON/JSONL only under the documented failure/empty-source cases, ignores `request_dump_*.json`, and reports which backend won, how many sessions each source contributed, and why fallback was used. This repo-doc update describes the behavior; it does not perform a runtime plugin deploy.
-
-Use a private local config override for personal delivery targets, e.g. a Signal
-DM. Do not put user-specific/personal recipients into repo defaults, examples, or tests.
-`timezone` is used in the generated prompt and lookback wording. The Hermes cron
-scheduler itself reads its schedule clock from Hermes' runtime timezone
-configuration (global Hermes `timezone` / `HERMES_TIMEZONE`, or server-local), not
-from this per-Cortex cron section. Yes, two knobs. No, they are not the same knob.
-
-WeeklyReview is configured next to NightlyPromotion and is selected explicitly with `--job weekly`. It is disabled by default; set `enabled: true` in your private config before installing it:
-
-```yaml
-cron:
-  weekly_review:
-    enabled: false
-    name: hermes-cortex-weekly-review
-    schedule: "0 8 * * 1"
-    timezone: Europe/Berlin
-    deliver: origin
-    output_format: markdown
-    dry_run: true
-    stale_days: 180
-    stale_min_importance: 4.0
-    consolidation_min_degree: 3
-```
-
-`dry_run: true` adds `--dry-run` to the generated `cortex lifecycle weekly` command; `false` omits it. WeeklyReview remains read-only either way. The generated Markdown report includes graph stats, duplicates, stale high-importance notes, broken references, consolidation proposals, orphan nodes, contradictions, duration, and any error.
-
-`cortex cron install` and `cortex cron uninstall` remain backward-compatible and target NightlyPromotion by default. `cortex cron status` defaults to `--job all` so operators see both NightlyPromotion and WeeklyReview at a glance; use `--job nightly` or `--job weekly` for a single job. Install updates configured/default/legacy job identities instead of creating duplicates. `enabled: false` makes install refuse/skip creation.
-
-**Runtime plugin note:** The code and config changes described here live in the
-development repo. The active Hermes plugin at
-`~/.hermes/plugins/cortex/` is a separate Git checkout and must be updated
-explicitly — see [Update](#update) section above.
-
-Cron validation has one sharp edge: `HERMES_HOME` changes which cron store is
-visible. A `cronjob list` from an arbitrary worker profile can be empty even when
-the scheduler is fine. Prefer checking from the scheduler/home context by setting
-`HOME` to the account or directory where the scheduler stores cron jobs:
-
-```bash
-env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cron list
-env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cortex cron status
-env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cortex cron status --job weekly
-```
-
-## Graph viewer
-
-Cortex can generate a standalone D3 graph viewer for the vault. No server or
-frontend build step is required.
-
-```bash
-hermes cortex graph build
-hermes cortex graph viewer -o graph.html --embed-data --diagnostics
-python3 -m http.server 8765
-```
-
-Open <http://localhost:8765/graph.html>.
-
-Useful variants:
-
-```bash
-# Keep graph data in a separate JSON file
-hermes cortex graph export --format d3-json -o graph_data.json --diagnostics
-hermes cortex graph viewer -o graph.html --data graph_data.json
-
-# Focus on one neighborhood
-hermes cortex graph export --format d3-json \
-  --neighborhood "30_projects/Project - hermes-cortex.md" \
-  -o cortex_neighborhood.json
-```
-
-The viewer includes search, node/edge filters, selected-node detail, neighborhood
-focus, force-layout sliders, and optional diagnostics for broken/ambiguous links
-and orphan nodes.
+Full command reference: [`docs/CLI.md`](docs/CLI.md).
 
 ## Configuration
 
@@ -389,11 +225,12 @@ hooks:
     load_skill: false
 ```
 
-`skill_context` is the each-turn runtime rules channel. `bootstrap_context`
-is the first-turn static bootstrap channel, with deterministic
-`include_static_files` ordering. `dynamic_context` stays off by default and only
-injects Vault context when explicitly enabled. `context_injection` remains a
-legacy compatibility fallback; new configs should prefer the semantic blocks.
+`skill_context` is the each-turn runtime rules channel. `bootstrap_context` is
+the first-turn static bootstrap channel. `recent_context` can inject
+deterministic recent-session metadata from Hermes SessionDB. `dynamic_context`
+stays off by default and only injects Vault context when explicitly enabled.
+`context_injection` is a legacy compatibility fallback; new configs should prefer
+the semantic hook blocks above.
 
 `HERMES_HOME` is respected. Worker profiles therefore use their own Cortex config:
 
@@ -407,6 +244,103 @@ Create worker profiles with cloned skills/tools when they need vault access:
 hermes profile create researcher --clone-all
 hermes -p researcher tools enable cortex
 ```
+
+## Hook lifecycle status
+
+`hermes cortex config show` and `hermes cortex status` print an operator-facing
+hook lifecycle table. It separates lifecycle phases from legacy compatibility
+fields:
+
+- `cache_warm` runs at `session_start` and only warms process-local cache.
+- `skill_bootstrap`, `static_file_bootstrap`, `recent_context`, and
+  `dynamic_context` describe `pre_llm` hook context.
+- `recent_context` reads session titles/sources/timestamps only, never transcript
+  message bodies and never calls an LLM. It defaults to `source: sessiondb` with
+  `cron` and `api_server` excluded.
+- `legacy_context_injection` is displayed for compatibility. In a legacy-only
+  config it is `legacy-active`; when semantic hook blocks are configured it is
+  `legacy-ignored`.
+
+The lifecycle table describes behavior for sessions/processes that loaded the
+current plugin code and config. Already-running TUI sessions, gateway processes,
+and Kanban workers may retain older hook code/config until a new session/process
+starts or an operator-approved restart is performed.
+
+## Embeddings and cache behavior
+
+Cortex uses SentenceTransformer embeddings and stores vector data in Chroma.
+Cache/reuse behavior is explicit and visible:
+
+- `embeddings.cache_folder` controls the SentenceTransformer cache path.
+- `embeddings.local_files_only` defaults to `auto`; warm caches can be reused
+  without network access, while explicit `true` forces offline-only behavior.
+- `embedding_manifest.json` sits next to the Chroma store and records model/dim
+  metadata for skip decisions.
+- `hermes cortex embed` and `hermes cortex status` report whether the model was
+  reused and which cache mode is active.
+- `HF_TOKEN` is not required; token values are not logged.
+
+## Nightly promotion and WeeklyReview
+
+Cortex can package Hermes cron jobs for vault maintenance workflows. Repo defaults
+are public-safe and do not install jobs unless you explicitly opt in through
+config and `hermes cortex cron install`.
+
+NightlyPromotion is intended to promote durable session knowledge into the vault.
+WeeklyReview is read-only and reports graph/metadata hygiene issues such as
+broken references, stale high-importance notes, or consolidation candidates.
+
+Useful commands:
+
+```bash
+hermes cortex cron status
+hermes cortex cron install --job nightly
+hermes cortex cron install --job weekly
+hermes cortex cron uninstall --job weekly
+```
+
+Job config lives under `cron.nightly_promotion` and `cron.weekly_review` in the
+active Cortex config. Keep personal delivery targets in private local config, not
+in tracked defaults, examples, seed notes, tests, or docs.
+
+Cron validation has one sharp edge: `HERMES_HOME` changes which cron store is
+visible. A check from an arbitrary worker profile can be empty even when the
+scheduler is fine. Prefer checking from the scheduler/home context when in doubt:
+
+```bash
+env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cron list
+env -u HERMES_HOME HOME=/path/to/scheduler-home hermes cortex cron status
+```
+
+## Graph viewer
+
+Cortex can generate a standalone D3 graph viewer for the vault. No server or
+frontend build step is required.
+
+```bash
+hermes cortex graph build
+hermes cortex graph viewer -o graph.html --embed-data --diagnostics
+python3 -m http.server 8765
+```
+
+Open <http://localhost:8765/graph.html>.
+
+Useful variants:
+
+```bash
+# Keep graph data in a separate JSON file
+hermes cortex graph export --format d3-json -o graph_data.json --diagnostics
+hermes cortex graph viewer -o graph.html --data graph_data.json
+
+# Focus on one neighborhood
+hermes cortex graph export --format d3-json \
+  --neighborhood "30_projects/Project - hermes-cortex.md" \
+  -o cortex_neighborhood.json
+```
+
+The viewer includes search, node/edge filters, selected-node detail,
+neighborhood focus, force-layout sliders, and optional diagnostics for
+broken/ambiguous links and orphan nodes.
 
 ## Vault metadata
 
@@ -426,6 +360,25 @@ stability: stable | evolving | deprecated
 
 Full schema: [`docs/METADATA.md`](docs/METADATA.md).
 
+## Update
+
+Runtime updates are Git-only. No copy, rsync, generated stub, or symlink farm.
+Keep your development checkout and active runtime plugin checkout separate; a
+commit in a development clone does not affect the plugin Hermes is currently
+loading until the runtime checkout is pulled.
+
+```bash
+cd ~/.hermes/plugins/cortex
+git fetch origin --prune
+git pull --ff-only origin main
+./install.sh --with-hermes-venv --with-hermes-skills
+scripts/smoke-runtime-cortex-cli.sh
+```
+
+Then start a new Hermes session or `/reset` the current one. Restart the gateway
+only when runtime code or hooks changed and gateway workers need to load the new
+code. Pure README/docs changes do not require a restart.
+
 ## Troubleshooting
 
 ### Tools are missing in chat
@@ -437,6 +390,7 @@ Also check:
 ```bash
 hermes plugins list
 hermes tools list
+hermes cortex status
 ```
 
 ### Search returns stale or weird results
@@ -491,7 +445,7 @@ HERMES_HOME="$TMP_HOME" pytest
 rm -rf "$TMP_HOME"
 python -m build --no-isolation
 git diff --check
-git grep -n "gitlab.skynet\|skynet-node\|/home/dennis\|jarvis@\|/opt/jarvis\|Dennis" -- . ':!README.md'
+! git grep -nE "gitlab\\.|skynet|/home/[^/[:space:]]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|/opt/(jarvis|private)" -- . ':!README.md'
 ```
 
 The public repository URL used by install docs, helper scripts, and the CI badge
@@ -513,11 +467,11 @@ plugin.yaml     → version
 ```
 
 Packaging note: the supported Hermes installation path is a Git checkout under
-`~/.hermes/plugins/cortex/`, because Hermes reads `plugin.yaml`, `__init__.py`, and
-`plugin_runtime.py` from the checkout root. The Python package build is still
-validated so the `cortex` library and CLI remain installable and dependency issues
-are caught early; publishing to PyPI is a separate decision, not required for the
-standalone Hermes plugin workflow.
+`~/.hermes/plugins/cortex/`, because Hermes reads `plugin.yaml`, `__init__.py`,
+and `plugin_runtime.py` from the checkout root. The Python package build is still
+validated so the `cortex` library and CLI remain installable and dependency
+issues are caught early; publishing to PyPI is a separate decision, not required
+for the standalone Hermes plugin workflow.
 
 ## Repository layout
 
@@ -529,7 +483,7 @@ standalone Hermes plugin workflow.
 ├── cortex/              # CLI, indexing, search, graph, lifecycle code
 ├── skills/              # Companion Hermes skills
 ├── tests/               # Pytest suite
-└── docs/                # Architecture and vault metadata reference
+└── docs/                # Architecture, CLI, development, and metadata docs
 ```
 
 ## License

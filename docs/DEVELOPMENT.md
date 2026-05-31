@@ -125,9 +125,32 @@ unit tests.
 
 ## Release preflight
 
-Before making a release or changing public-facing defaults, run the README's
-release preflight plus the local gate above. Keep these values in sync before
-tagging:
+Before making a release or changing public-facing defaults, run the same checks
+CI runs from a clean checkout:
+
+```bash
+ruff check .
+TMP_HOME=$(mktemp -d)
+HERMES_HOME="$TMP_HOME" pytest
+rm -rf "$TMP_HOME"
+python -m build --no-isolation
+git diff --check
+! git grep -nE "gitlab\\.|skynet|/home/[^/[:space:]]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|/opt/(jarvis|private)" -- . ':!README.md'
+```
+
+The public repository URL used by install docs, helper scripts, and the CI badge
+is:
+
+```text
+https://github.com/Mugen0815/hermes-cortex.git
+```
+
+Keep personal paths, private remotes, private mail addresses, local delivery
+targets, and internal phase/codename language out of tracked defaults, examples,
+seed vault notes, tests, and public docs.
+
+Versioning is shared between the Python package metadata and the Hermes plugin
+manifest. Keep these values in sync before tagging:
 
 ```text
 pyproject.toml  → [project].version
@@ -135,4 +158,6 @@ plugin.yaml     → version
 ```
 
 The Python package build is a dependency/packaging gate. The supported Hermes
-plugin deployment remains the Git checkout under `~/.hermes/plugins/cortex/`.
+plugin deployment remains the Git checkout under `~/.hermes/plugins/cortex/`;
+publishing to PyPI is a separate decision, not required for the standalone Hermes
+plugin workflow.

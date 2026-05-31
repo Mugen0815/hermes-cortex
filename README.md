@@ -415,64 +415,6 @@ hermes cortex search "exact note title" --top-k 30
 If it still does not appear, verify the file exists in the vault and rebuild the
 index. Annoying, but empirical.
 
-## Development
-
-For local setup, test gates, runtime plugin updates, and skill-sync workflow, see
-[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
-
-Short path:
-
-```bash
-cd ~/hermes-workspace/20_repos/hermes-cortex
-./install.sh --dev
-source .venv/bin/activate
-ruff check .
-TMP_HOME=$(mktemp -d)
-HERMES_HOME="$TMP_HOME" pytest
-rm -rf "$TMP_HOME"
-python -m build --no-isolation
-```
-
-## Release preflight
-
-Before making the repository public or cutting a release, run the same checks CI
-runs from a clean checkout:
-
-```bash
-ruff check .
-TMP_HOME=$(mktemp -d)
-HERMES_HOME="$TMP_HOME" pytest
-rm -rf "$TMP_HOME"
-python -m build --no-isolation
-git diff --check
-! git grep -nE "gitlab\\.|skynet|/home/[^/[:space:]]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|/opt/(jarvis|private)" -- . ':!README.md'
-```
-
-The public repository URL used by install docs, helper scripts, and the CI badge
-is:
-
-```text
-https://github.com/Mugen0815/hermes-cortex.git
-```
-
-Keep personal paths, private remotes, private mail addresses, and local delivery
-targets out of tracked defaults, examples, seed vault notes, tests, and docs.
-
-Versioning is shared between the Python package metadata and the Hermes plugin
-manifest. Keep these values in sync before tagging:
-
-```text
-pyproject.toml  → [project].version
-plugin.yaml     → version
-```
-
-Packaging note: the supported Hermes installation path is a Git checkout under
-`~/.hermes/plugins/cortex/`, because Hermes reads `plugin.yaml`, `__init__.py`,
-and `plugin_runtime.py` from the checkout root. The Python package build is still
-validated so the `cortex` library and CLI remain installable and dependency
-issues are caught early; publishing to PyPI is a separate decision, not required
-for the standalone Hermes plugin workflow.
-
 ## Repository layout
 
 ```text

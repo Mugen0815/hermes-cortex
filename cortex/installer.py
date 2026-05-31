@@ -496,8 +496,16 @@ hooks:
   recent_context:
     enabled: false
     when: first_turn
-    source: disabled_placeholder
+    source: sessiondb
     budget: 1000
+    state_db_path: ~/.hermes/state.db
+    lookback_days: 7
+    max_sessions: 500
+    max_groups: 8
+    include_sources: []
+    exclude_sources: [cron, api_server]
+    diagnostics: true
+    query_hint: false
   dynamic_context:
     enabled: false
     when: each_turn

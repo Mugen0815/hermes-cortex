@@ -92,8 +92,8 @@ Runtime hook context is split semantically:
 - `skill_context` — each-turn runtime rules and skill bootstrap
 - `bootstrap_context` — first-turn static context, including deterministic
   `include_static_files`
-- `recent_context` — disabled placeholder in this cutover; no SessionDB/topic
-  condenser here
+- `recent_context` — disabled by default but SessionDB-capable deterministic
+  recent-topic metadata context
 - `dynamic_context` — gated/off-by-default user-message Vault context
 
 New semantic blocks take precedence over the legacy `hooks.context_injection`

@@ -268,6 +268,13 @@ def _diagnostic(message: str) -> str:
     return f"[cortex hook diagnostic: {message}]"
 
 
+def _hook_due(when: str, is_first_turn: bool) -> bool:
+    """Return whether a semantic pre_llm hook should run for this turn."""
+    if when == "first_turn":
+        return is_first_turn
+    return True
+
+
 def _render_static_files(hooks: Any) -> list[str]:
     parts: list[str] = []
     tokens_used = 0
@@ -332,7 +339,7 @@ def _pre_llm_call_semantic(hooks: Any, user_message: str, is_first_turn: bool) -
     parts: list[str] = []
 
     skill = hooks.skill_context
-    if skill.enabled and skill.load_skill:
+    if skill.enabled and skill.load_skill and _hook_due(skill.when, is_first_turn):
         skill_text = _load_skill_content(skill.skill_path)
         if skill_text:
             parts.append(skill_text)
@@ -340,18 +347,22 @@ def _pre_llm_call_semantic(hooks: Any, user_message: str, is_first_turn: bool) -
             parts.append(_diagnostic(
                 f"skipped skill_context: skill unavailable at {skill.skill_path or _DEFAULT_SKILL_PATH}"
             ))
+    elif skill.enabled and skill.load_skill:
+        _log.debug("Skill context skipped after first turn")
 
     bootstrap = hooks.bootstrap_context
-    if bootstrap.enabled and is_first_turn:
+    if bootstrap.enabled and _hook_due(bootstrap.when, is_first_turn):
         parts.extend(_render_static_files(hooks))
-    elif bootstrap.enabled and not is_first_turn:
+    elif bootstrap.enabled:
         _log.debug("Bootstrap context skipped after first turn")
 
     recent = hooks.recent_context
-    if recent.enabled:
+    if recent.enabled and _hook_due(recent.when, is_first_turn):
         parts.append(_diagnostic(
             "skipped recent_context: disabled placeholder; SessionDB recent-context query is not implemented"
         ))
+    elif recent.enabled:
+        _log.debug("Recent context skipped after first turn")
 
     dynamic = hooks.dynamic_context
     if dynamic.enabled:

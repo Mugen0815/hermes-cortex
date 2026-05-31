@@ -587,6 +587,24 @@ def _static_file_summary(entry) -> str:
     return "; ".join(bits)
 
 
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _print_hook_lifecycle(cfg, *, indent: str = "") -> None:
+    print(f"{indent}Hook lifecycle:")
+    print(f"{indent}  Runtime mode: {'semantic' if cfg.hooks.uses_semantic_runtime() else 'legacy'}")
+    print(f"{indent}  Phase         Name                      Enabled  Effective  Timing         Origin           Skipped reason")
+    for row in cfg.hooks.hook_statuses():
+        skipped = row.skipped_reason or "-"
+        print(
+            f"{indent}  {row.phase:<13} {row.name:<25} "
+            f"{_yes_no(row.enabled):<8} {_yes_no(row.effective):<10} "
+            f"{row.timing:<14} {row.origin:<16} {skipped}"
+        )
+        print(f"{indent}    source: {row.source}; payload: {row.payload}; target: {row.target}")
+
+
 def _cmd_config_path(args: argparse.Namespace) -> int:
     from cortex.config import find_config
 
@@ -631,6 +649,7 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     print(f"Runtime projection: {cfg.hooks.context_injection_enabled}")
     print(f"Load skill:      {cfg.hooks.load_skill}")
     print(f"Skill path:      {cfg.hooks.skill_path or '(default profile skill path)'}")
+    _print_hook_lifecycle(cfg)
     return 0
 
 
@@ -667,6 +686,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"    - {_static_file_summary(entry)}")
     print(f"  Legacy context: {_legacy_context_label(cfg)}")
     print(f"  Load skill:     {cfg.hooks.load_skill}")
+    _print_hook_lifecycle(cfg, indent="  ")
     return 0
 
 

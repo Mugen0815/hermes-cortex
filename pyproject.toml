@@ -42,7 +42,7 @@ where = ["."]
 include = ["cortex*"]
 
 [tool.setuptools.package-data]
-"cortex" = ["_seed/**/*.md"]
+"cortex" = ["_seed/**/*.md", "cron_templates/*.md"]
 
 [tool.ruff]
 line-length = 100

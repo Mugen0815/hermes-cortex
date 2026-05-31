@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.config import CronNightlyPromotionConfig, CronWeeklyReviewConfig
 from cortex.cron import (
     _NIGHTLY_PROMPT,
+    _WEEKLY_PROMPT,
     _build_job,
     _build_weekly_job,
     _job_id,
@@ -16,6 +18,28 @@ from cortex.cron import (
     status,
     uninstall,
 )
+
+
+def test_cron_prompt_templates_are_loaded_from_package_resources():
+    from importlib import resources
+
+    template_root = resources.files("cortex").joinpath("cron_templates")
+
+    assert _NIGHTLY_PROMPT == template_root.joinpath("nightly_promotion.md").read_text(encoding="utf-8")
+    assert _WEEKLY_PROMPT == template_root.joinpath("weekly_review.md").read_text(encoding="utf-8")
+
+
+def test_cron_prompt_templates_are_persona_and_platform_neutral():
+    for prompt in (_NIGHTLY_PROMPT, _WEEKLY_PROMPT):
+        assert "Jarvis" not in prompt
+        assert "Du bist" not in prompt
+        assert "Signal" not in prompt
+
+
+def test_config_example_defaults_do_not_mention_signal():
+    config_example = Path(__file__).resolve().parents[1] / "config.example.yaml"
+
+    assert "Signal" not in config_example.read_text(encoding="utf-8")
 
 
 def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():

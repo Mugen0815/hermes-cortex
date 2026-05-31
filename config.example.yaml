@@ -60,8 +60,8 @@ context_builder:
 
 # Cortex-managed Hermes cron jobs.
 # Public-safe defaults keep jobs disabled; set enabled: true in your private config.
-# Public-safe default delivery is "origin". For a local Signal override, set
-# deliver in your private ~/.hermes/cortex/config.yaml, not in repo defaults.
+# Public-safe default delivery is "origin". Override deliver in your private
+# ~/.hermes/cortex/config.yaml, not in repo defaults.
 cron:
   nightly_promotion:
     enabled: false

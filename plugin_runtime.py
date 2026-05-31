@@ -358,9 +358,20 @@ def _pre_llm_call_semantic(hooks: Any, user_message: str, is_first_turn: bool) -
 
     recent = hooks.recent_context
     if recent.enabled and _hook_due(recent.when, is_first_turn):
-        parts.append(_diagnostic(
-            "skipped recent_context: disabled placeholder; SessionDB recent-context query is not implemented"
-        ))
+        try:
+            from cortex.recent_context import build_recent_context, render_diagnostics
+
+            result = build_recent_context(recent)
+            if result.text:
+                parts.append(result.text)
+                if recent.diagnostics:
+                    parts.append(_diagnostic(f"recent_context: {render_diagnostics(result.diagnostics)}"))
+            else:
+                parts.append(_diagnostic(f"skipped recent_context: {render_diagnostics(result.diagnostics)}"))
+            if recent.query_hint and result.query_hint:
+                parts.append(f"[recent_context query_hint]\n{result.query_hint}")
+        except Exception as exc:
+            parts.append(_diagnostic(f"skipped recent_context: {type(exc).__name__}: {exc}"))
     elif recent.enabled:
         _log.debug("Recent context skipped after first turn")
 

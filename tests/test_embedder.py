@@ -736,18 +736,23 @@ def test_same_process_embedder_reuses_model(monkeypatch: pytest.MonkeyPatch) -> 
     assert fake_st.SentenceTransformer.call_count == 1
 
 
-def test_hf_warning_filter_dedupes_exact_token_warning(caplog: pytest.LogCaptureFixture) -> None:
+def test_hf_warning_filter_dedupes_child_logger_token_warning(caplog: pytest.LogCaptureFixture) -> None:
     import cortex.embedder as embedder_mod
 
     embedder_mod._HF_WARNING_FILTER_INSTALLED = False
     embedder_mod._HF_WARNING_SEEN.clear()
-    logger = logging.getLogger("huggingface_hub")
+    logger = logging.getLogger("huggingface_hub.file_download")
+    warning = "HF_TOKEN is not set; unauthenticated Hugging Face Hub requests may be rate limited"
+    unrelated = "Cache directory is read-only; using temporary download location"
 
     with caplog.at_level("WARNING", logger="huggingface_hub"):
         embedder_mod._install_hf_warning_filter()
-        logger.warning("HF_TOKEN is not set; unauthenticated Hugging Face Hub requests may be rate limited")
-        logger.warning("HF_TOKEN is not set; unauthenticated Hugging Face Hub requests may be rate limited")
+        embedder_mod._install_hf_warning_filter()
+        assert sum(isinstance(f, embedder_mod._OnceHFWarningFilter) for f in logger.filters) == 1
+        logger.warning(warning)
+        logger.warning(warning)
+        logger.warning(unrelated)
 
-    assert [r.message for r in caplog.records].count(
-        "HF_TOKEN is not set; unauthenticated Hugging Face Hub requests may be rate limited"
-    ) == 1
+    messages = [r.message for r in caplog.records]
+    assert messages.count(warning) == 1
+    assert messages.count(unrelated) == 1

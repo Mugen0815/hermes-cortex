@@ -587,28 +587,65 @@ _HF_WARNING_SEEN: set[str] = set()
 
 class _OnceHFWarningFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        if not (
+            record.name == "huggingface_hub"
+            or record.name.startswith("huggingface_hub.")
+            or record.name == "sentence_transformers"
+            or record.name.startswith("sentence_transformers.")
+        ):
+            return True
         message = record.getMessage()
         lowered = message.lower()
-        if not any(token in lowered for token in ("hf_token", "hugging_face_hub_token", "unauthenticated")):
+        if not any(
+            token in lowered
+            for token in (
+                "hf_token",
+                "hugging_face_hub_token",
+                "unauthenticated",
+                "rate limit",
+                "rate-limit",
+                "rate_limit",
+            )
+        ):
             return True
         key = " ".join(message.split())
+        if getattr(record, "_cortex_hf_warning_dedupe_key", None) == key:
+            return True
         if key in _HF_WARNING_SEEN:
             return False
         _HF_WARNING_SEEN.add(key)
+        record._cortex_hf_warning_dedupe_key = key
         return True
 
 
 def _install_hf_warning_filter() -> None:
     global _HF_WARNING_FILTER_INSTALLED
-    if _HF_WARNING_FILTER_INSTALLED:
-        return
     filt = _OnceHFWarningFilter()
-    for name in ("huggingface_hub", "sentence_transformers"):
+    logger_names = {
+        "huggingface_hub",
+        "huggingface_hub.file_download",
+        "sentence_transformers",
+        "sentence_transformers.SentenceTransformer",
+    }
+    logger_names.update(
+        name
+        for name in logging.Logger.manager.loggerDict
+        if name == "huggingface_hub"
+        or name.startswith("huggingface_hub.")
+        or name == "sentence_transformers"
+        or name.startswith("sentence_transformers.")
+    )
+    for name in logger_names:
         logger = logging.getLogger(name)
         for existing in list(logger.filters):
             if isinstance(existing, _OnceHFWarningFilter):
                 logger.removeFilter(existing)
         logger.addFilter(filt)
+    for handler in logging.getLogger().handlers:
+        for existing in list(handler.filters):
+            if isinstance(existing, _OnceHFWarningFilter):
+                handler.removeFilter(existing)
+        handler.addFilter(filt)
     _HF_WARNING_FILTER_INSTALLED = True
 
 

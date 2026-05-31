@@ -186,6 +186,23 @@ current plugin code and config. Already-running TUI sessions, Hermes gateway
 processes, and Kanban workers may retain older hook code/config until a new
 session/process starts or an operator-approved restart is performed.
 
+## Embedding cache hygiene
+
+P8 is now documented as explicit cache/reuse plumbing instead of silent hope:
+
+- `embeddings.cache_folder` makes the SentenceTransformer cache path visible.
+- `embeddings.local_files_only` is `auto` by default, so a warm cache can be
+  reused without pretending the network is magical; explicit `true` forces
+  offline-only behavior.
+- `embedding_manifest.json` is the sidecar next to the Chroma store that holds
+  model/dim metadata for skip decisions.
+- `cortex embed` / `hermes cortex status` report whether the model was reused
+  and which cache mode is active. No `HF_TOKEN` is required, and token values
+  are not logged.
+- HF / SentenceTransformer warning spam is deduped across the logger tree,
+  including child loggers, so the unauthenticated warning shows once instead of
+  being spammed like it wants a bigger budget.
+
 ## Nightly promotion lifecycle
 
 The nightly promotion job is **canonical-first**:

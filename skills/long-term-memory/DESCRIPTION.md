@@ -11,6 +11,7 @@ Skills for structured long-term memory using a cortex-indexed Obsidian vault.
 | When you want to... | Load... |
 |---|---|
 | Retrieve knowledge from memory / vault / sessions | `memory-query-flow` |
+| Debug memory hooks, ranking, SessionDB/search latency, or Cortex CLI issues | `memory-diagnostics` |
 | Write, edit, or name a note | `obsidian` |
 | Set up or repair vault structure, templates, or bootstrap | `vault-infrastructure` |
 

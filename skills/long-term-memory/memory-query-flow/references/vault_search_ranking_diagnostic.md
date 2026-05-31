@@ -84,6 +84,6 @@ gewinnen knapp, weil BM25 dort perfekt matched.
 
 ## Links
 
-- `memory-query-flow` Skill → Abschnitt "Failure #3 — vault_search false negative"
+- `memory-diagnostics` Skill → Abschnitt "vault_search false negatives"
 - `cortex.config._CONFIG_SEARCH_PATHS` in `src/cortex/config.py`
 - `cortex.plugin._resolve_state()` in `src/cortex/plugin.py`

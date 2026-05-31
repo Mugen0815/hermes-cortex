@@ -145,8 +145,8 @@ If the user says the analysis is too much to scroll, asks to "save this for late
 Missing this check leads to duplicate notes, wrong cross-references, and
 user frustration ("Natürlich gibt es eine Project-Note!"). Vault_search's BM25
 ranker can push long target notes outside the top-k window — don't trust a
-negative result at face value. See `memory-query-flow` skill → Failure #3 for
-the full diagnostic flow.
+negative result at face value. See `memory-diagnostics` for the full diagnostic
+flow.
 
 ## User language mapping (English and German)
 

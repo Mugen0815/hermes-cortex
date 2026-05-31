@@ -152,8 +152,22 @@ flow.
 
 | User says | Action |
 |---|---|
-| "Remember...", "Note this..." | `memory` tool (compact fact) |
+| "Remember...", "Note this...", "merk dir das" about user preference/correction/stable tool behavior | `memory` tool (compact fact) |
+| "Remember...", "Note this...", "merk dir das" about project/design/architecture/durable system knowledge | Write/update Vault → index → embed; optionally add compact memory pointer |
 | "Save to long-term memory / vault / Obsidian", "in den Vault / ins Langzeitgedächtnis" | Write to vault → index → embed |
+
+Route by content durability, not by phrase alone. A request phrased as "remember
+this", "note this", or "merk dir das" still belongs in the Vault when the content
+is project/design/architecture knowledge, a durable system fact, or a decision —
+even if the user did not literally say "Vault".
+
+## Daily journal / same-day memory
+
+When the user wants chronological orientation or same-day continuity, use the
+diary pattern in `references/daily-journal-and-session-end-memory.md`:
+`on_session_end` should behave as short-term working memory / distill queue,
+while nightly promotion decides what becomes canonical. Prefer an indexed
+`60_maps/Map - Daily Journal.md` MVP before adding a new journal folder.
 
 ## Principles
 

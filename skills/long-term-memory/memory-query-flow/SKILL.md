@@ -55,10 +55,17 @@ For a specific note title or filename, use `top_k=30` and filesystem fallback.
 
 | User intent | Target |
 |---|---|
-| "Remember...", "Note this...", correction about user/tool behavior | `memory` tool: compact single fact |
+| "Remember...", "Note this...", "merk dir das" about a user preference, correction, or stable tool behavior | `memory` tool: compact single fact |
 | "Save to long-term memory", "put this in the vault", "document this" | Vault note: structured durable knowledge |
-| Project decision, runbook, architecture, durable system fact | Vault note, unless user asks only for compact memory |
+| "Remember..." / "merk dir das" about a project decision, runbook, architecture, design direction, or durable system fact | Vault note first; optionally add a compact memory pointer |
+| Project decision, runbook, architecture, durable system fact | Vault note, unless user explicitly asks only for compact prompt memory |
 | Temporary task status, PR/issue IDs, stale-by-next-week details | Leave in session / task context, not durable memory |
+
+Do **not** route by phrase alone. Phrases like "remember this", "note this", or
+"merk dir das" can request either compact prompt memory or durable Vault storage.
+Choose by content durability: project decisions, architecture, design direction,
+runbooks, and memory-system facts belong in the Vault and require the index/embed
+workflow.
 
 ## Vault write workflow
 

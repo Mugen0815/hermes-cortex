@@ -127,11 +127,14 @@ def _cmd_embed(args: argparse.Namespace) -> int:
     print(f"Chroma path:  {cfg.index.chroma_path}")
     print(f"Model:        {cfg.embeddings.model}")
     print(f"Device:       {cfg.embeddings.device} (will auto-resolve)")
+    print(f"Model cache:  {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
+    print(f"Local files:  {cfg.embeddings.local_files_only}")
     try:
         report = embed_chunks(cfg, force=args.force, batch_size=args.batch_size)
     except ModelMismatchError as e:
         return print_error(f"\n  \u2717  {e}", exit_code=2)
     print(report.summary())
+    print(f"Manifest:     {report.manifest_path}")
     if report.errors:
         print(f"\n  Errors ({len(report.errors)}):")
         for cid, err in report.errors[:10]:
@@ -645,6 +648,8 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     print(f"Chroma:          {cfg.index.chroma_path}")
     print(f"Collection:      {cfg.index.collection}")
     print(f"Embeddings:      {cfg.embeddings.model} ({cfg.embeddings.device})")
+    print(f"Embedding cache: {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
+    print(f"Embed local:     {cfg.embeddings.local_files_only}")
     print(f"Cache warm:      {cfg.hooks.cache_warm_enabled}")
     print(
         f"Skill context:   {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when}); "
@@ -683,6 +688,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"  Vault:          {cfg.vault.path} ({'ok' if cfg.vault.path.exists() else 'missing'})")
     print(f"  Chunks:         {cfg.index.chunks_path} ({'ok' if cfg.index.chunks_path.exists() else 'missing'})")
     print(f"  Chroma:         {cfg.index.chroma_path} ({'ok' if cfg.index.chroma_path.exists() else 'missing'})")
+    print(f"  Embeddings:     {cfg.embeddings.model} ({cfg.embeddings.device})")
+    print(f"  Embedding cache: {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
+    print(f"  Embed local:    {cfg.embeddings.local_files_only}")
     print(f"  Cache warm:     {cfg.hooks.cache_warm_enabled}")
     print(
         f"  Skill context:  {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when}); "

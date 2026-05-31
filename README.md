@@ -129,7 +129,10 @@ git pull --ff-only origin main
 scripts/smoke-runtime-cortex-cli.sh
 ```
 
-Then start a new Hermes session or `/reset` the current one.
+Then start a new Hermes session or `/reset` the current one. Hook code/config is
+process-local: already-started TUI sessions, gateway processes, and Kanban
+workers can retain old hook behavior until they start a new session/process or an
+operator-approved restart picks up the updated plugin checkout/config.
 
 ## Common commands
 
@@ -173,6 +176,11 @@ The table shows `enabled`, `effective`, timing (`first_turn`, `each_turn`, or
 `when` values are validated per block: `skill_context` accepts `first_turn` or
 `each_turn`; `bootstrap_context` and `recent_context` accept only `first_turn`;
 `dynamic_context` accepts only `each_turn`.
+
+The lifecycle table describes behavior for sessions/processes that loaded the
+current plugin code and config. Already-running TUI sessions, Hermes gateway
+processes, and Kanban workers may retain older hook code/config until a new
+session/process starts or an operator-approved restart is performed.
 
 ## Nightly promotion lifecycle
 

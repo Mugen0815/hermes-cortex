@@ -61,7 +61,11 @@ Hermes loads Cortex as a standalone directory plugin:
 The active runtime source is the plugin checkout itself. Keep that checkout in sync
 with the development repo via `git pull --ff-only origin main` inside
 `~/.hermes/plugins/cortex/`; otherwise the `hermes cortex ...` command surface can
-lag behind `python -m cortex.cli ...`. The runtime smoke check is:
+lag behind `python -m cortex.cli ...`. Hook code/config is also process-local:
+already-started TUI sessions, Hermes gateway processes, and Kanban workers may
+retain the old hook behavior until a new session/process starts or an
+operator-approved restart picks up the updated plugin checkout/config. The
+runtime smoke check is:
 
 ```bash
 scripts/smoke-runtime-cortex-cli.sh

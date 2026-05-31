@@ -133,12 +133,22 @@ def test_run_writes_valid_config(plan: InstallPlan) -> None:
     assert raw["hooks"]["skill_context"]["enabled"] is True
     assert raw["hooks"]["bootstrap_context"]["enabled"] is False
     assert raw["hooks"]["recent_context"]["enabled"] is False
+    assert raw["hooks"]["recent_context"]["source"] == "sessiondb"
+    assert raw["hooks"]["recent_context"]["state_db_path"] == "~/.hermes/state.db"
+    assert raw["hooks"]["recent_context"]["lookback_days"] == 7
+    assert raw["hooks"]["recent_context"]["max_sessions"] == 500
+    assert raw["hooks"]["recent_context"]["max_groups"] == 8
+    assert raw["hooks"]["recent_context"]["include_sources"] == []
+    assert raw["hooks"]["recent_context"]["exclude_sources"] == ["cron", "api_server"]
+    assert raw["hooks"]["recent_context"]["diagnostics"] is True
+    assert raw["hooks"]["recent_context"]["query_hint"] is False
     assert raw["hooks"]["dynamic_context"]["enabled"] is False
     assert raw["hooks"]["dynamic_context"]["query"] == ""
     assert raw["hooks"]["context_injection"]["query"] == ""
     assert raw["hooks"]["bootstrap_context"]["include_static_files"][0]["enabled"] is False
     assert raw["hooks"]["bootstrap_context"]["include_static_files"][0]["label"] == "Hermes SOUL bootstrap"
     assert "current projects, recent decisions, and active tasks" not in plan.config_path.read_text()
+    assert "disabled_placeholder" not in plan.config_path.read_text()
     assert raw["cron"]["nightly_promotion"]["deliver"] == "origin"
     assert raw["cron"]["nightly_promotion"]["session_globs"] == [
         "~/.hermes/sessions/*.jsonl",

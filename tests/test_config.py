@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cortex.config import (
     Config,
@@ -233,6 +234,28 @@ def test_defaults_when_optional_sections_omitted(tmp_path: Path) -> None:
     assert cfg.cron.weekly_review.stale_days == 180
     assert cfg.cron.weekly_review.stale_min_importance == 4.0
     assert cfg.cron.weekly_review.consolidation_min_degree == 3
+
+
+def test_public_example_recent_context_matches_sessiondb_defaults() -> None:
+    example_path = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    raw = yaml.safe_load(example_path.read_text())
+    recent = raw["hooks"]["recent_context"]
+
+    assert recent == {
+        "enabled": False,
+        "when": "first_turn",
+        "source": "sessiondb",
+        "budget": 1000,
+        "state_db_path": "~/.hermes/state.db",
+        "lookback_days": 7,
+        "max_sessions": 500,
+        "max_groups": 8,
+        "include_sources": [],
+        "exclude_sources": ["cron", "api_server"],
+        "diagnostics": True,
+        "query_hint": False,
+    }
+    assert "disabled_placeholder" not in example_path.read_text()
 
 
 def test_find_config_via_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cfg_file: Path) -> None:

@@ -134,6 +134,8 @@ class IndexConfig:
 class EmbeddingsConfig:
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     device: str = "cpu"
+    cache_folder: Optional[Path] = None
+    local_files_only: str = "auto"
 
 
 @dataclass
@@ -853,6 +855,8 @@ def load_config(path: Optional[str | Path] = None) -> Config:
     embeddings = EmbeddingsConfig(
         model=emb.get("model", "sentence-transformers/all-MiniLM-L6-v2"),
         device=emb.get("device", "cpu"),
+        cache_folder=_expand(emb.get("cache_folder")) if emb.get("cache_folder") else None,
+        local_files_only=str(emb.get("local_files_only", "auto")).strip().lower(),
     )
 
     # ---- search ----

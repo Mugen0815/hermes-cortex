@@ -35,6 +35,8 @@ index:
 embeddings:
   model: sentence-transformers/all-MiniLM-L6-v2
   device: auto  # 'auto' picks cuda > mps > cpu; or set 'cpu', 'cuda', 'mps'
+  cache_folder: null  # null = sentence-transformers default; or set a path such as ~/.cache/huggingface
+  local_files_only: auto  # auto = sentence-transformers default; true/yes/1/on forces offline cache-only loading
 
 search:
   top_k: 20

@@ -45,6 +45,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -60,6 +62,7 @@ log = logging.getLogger("cortex.embedder")
 # Collection-level metadata keys we use to guard against model/dim changes.
 COLLECTION_META_MODEL = "embedding_model"
 COLLECTION_META_DIM = "embedding_dim"
+EMBEDDING_MANIFEST = "embedding_manifest.json"
 
 # Soft warning threshold: chunks above this estimated token count are likely
 # to be truncated by most sentence-transformers (which max out at 256-512).
@@ -130,6 +133,12 @@ class EmbedReport:
     device: str = ""
     model: str = ""
     embedding_dim: int = 0
+    cache_folder: str = ""
+    local_files_only: str = "auto"
+    hf_token_present: bool = False
+    model_reused: bool = False
+    model_load_skipped_reason: str = ""
+    manifest_path: str = ""
     errors: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -138,6 +147,11 @@ class EmbedReport:
             f"({self.chunks_skipped_unchanged} unchanged, "
             f"{self.chunks_removed} removed). "
             f"Model: {self.model} (dim={self.embedding_dim}) on {self.device}. "
+            f"Cache: {self.cache_folder or '(sentence-transformers default)'}; "
+            f"local_files_only={self.local_files_only}; "
+            f"HF token={'yes' if self.hf_token_present else 'no'}; "
+            f"model_reused={'yes' if self.model_reused else 'no'}; "
+            f"load_skipped={self.model_load_skipped_reason or 'no'}. "
             f"Largest chunk: {self.max_chunk_chars} chars / "
             f"~{self.max_chunk_tokens_est} tokens; "
             f"{self.chunks_over_token_threshold} above {TOKEN_WARN_THRESHOLD}-token warn threshold. "
@@ -325,15 +339,68 @@ def _collection_meta(collection) -> dict[str, Any]:
     return {}
 
 
+def embedding_manifest_path(cfg: Config) -> Path:
+    """Sidecar metadata path for durable model/dim guard state."""
+    return cfg.index.chroma_path / EMBEDDING_MANIFEST
+
+
+def _chunks_fingerprint(ids: set[str], hashes: dict[str, str]) -> str:
+    payload = [[cid, hashes.get(cid, "")] for cid in sorted(ids)]
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _read_embedding_manifest(cfg: Config) -> dict[str, Any]:
+    path = embedding_manifest_path(cfg)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("Could not read embedding manifest %s: %s", path, e)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_embedding_manifest(
+    cfg: Config,
+    *,
+    model: str,
+    dim: int,
+    device: str,
+    cache_folder: str,
+    local_files_only: str,
+    ids: set[str],
+    hashes: dict[str, str],
+) -> None:
+    path = embedding_manifest_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "collection": cfg.index.collection,
+        COLLECTION_META_MODEL: model,
+        COLLECTION_META_DIM: int(dim),
+        "device": device,
+        "cache_folder": cache_folder,
+        "local_files_only": local_files_only,
+        "chunks_fingerprint": _chunks_fingerprint(ids, hashes),
+        "chunk_count": len(ids),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _manifest_hashes_from_chunks(chunks: list[dict[str, Any]]) -> dict[str, str]:
+    return {str(c.get("id")): index_hash_for_chunk(c) for c in chunks if c.get("id")}
+
+
 def _stamp_collection_meta(collection, model: str, dim: int) -> None:
     """Record (or update) the embedding model + dim on the collection.
 
     Uses ``modify`` if available, falls back to mutating ``.metadata``. We
     always preserve any existing keys (e.g. ``hnsw:space``).
 
-    Failure modes are logged at WARNING level — silently dropping a stamp
-    would weaken the model-/dim-mismatch guard, so we make the inability
-    to persist visible.
+    Sidecar manifest persistence is authoritative for cross-process guards;
+    collection metadata is retained as best-effort compatibility/debug info.
     """
     current = _collection_meta(collection)
     new_meta = dict(current)
@@ -346,22 +413,12 @@ def _stamp_collection_meta(collection, model: str, dim: int) -> None:
             modify(metadata=new_meta)
             return
         except Exception as e:  # noqa: BLE001
-            log.warning(
-                "collection.modify(metadata=...) failed (%s); "
-                "falling back to direct attribute set",
-                e,
-            )
+            log.debug("collection.modify(metadata=...) failed; using sidecar manifest guard: %s", e)
     # Fallback: best-effort attribute set (in-memory only on some backends).
     try:
         collection.metadata = new_meta  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001
-        log.warning(
-            "Could not persist collection metadata (model=%r, dim=%d): %s. "
-            "Model/dim guard will not survive a process restart on this backend.",
-            model,
-            dim,
-            e,
-        )
+        log.debug("Could not set collection metadata (model=%r, dim=%d): %s", model, dim, e)
 
 
 def _check_model_compatibility(collection, model: str, dim: int) -> None:
@@ -383,6 +440,27 @@ def _check_model_compatibility(collection, model: str, dim: int) -> None:
     if existing_dim and int(existing_dim) != int(dim):
         raise ModelMismatchError(
             f"Embedding dimension mismatch: collection has dim={existing_dim} "
+            f"but model {model!r} produces dim={dim}. "
+            f"Run `cortex reset --chroma` to wipe the vector store and re-embed."
+        )
+
+
+def _check_manifest_model_compatibility(manifest: dict[str, Any], model: str) -> None:
+    existing_model = manifest.get(COLLECTION_META_MODEL)
+    if existing_model and existing_model != model:
+        raise ModelMismatchError(
+            f"Embedding model mismatch: manifest was built with "
+            f"{existing_model!r} but config says {model!r}. "
+            f"Run `cortex reset --chroma` to wipe the vector store and re-embed."
+        )
+
+
+def _check_manifest_dim_compatibility(manifest: dict[str, Any], model: str, dim: int) -> None:
+    _check_manifest_model_compatibility(manifest, model)
+    existing_dim = manifest.get(COLLECTION_META_DIM)
+    if existing_dim is not None and int(existing_dim) != int(dim):
+        raise ModelMismatchError(
+            f"Embedding dimension mismatch: manifest has dim={existing_dim} "
             f"but model {model!r} produces dim={dim}. "
             f"Run `cortex reset --chroma` to wipe the vector store and re-embed."
         )
@@ -425,11 +503,21 @@ def existing_ids_with_hash(collection) -> tuple[set[str], dict[str, str]]:
 class Embedder:
     """Wraps a sentence-transformers model. Lazy-loads on first encode."""
 
-    def __init__(self, model_name: str, device: str):
+    def __init__(
+        self,
+        model_name: str,
+        device: str,
+        *,
+        cache_folder: Optional[Path] = None,
+        local_files_only: str = "auto",
+    ):
         self.model_name = model_name
         self.device = device
+        self.cache_folder = cache_folder
+        self.local_files_only = local_files_only
         self._model = None
         self._dim: Optional[int] = None
+        self.reused = False
 
     def _load(self) -> None:
         if self._model is not None:
@@ -437,7 +525,13 @@ class Embedder:
         from sentence_transformers import SentenceTransformer
 
         log.info("Loading embedding model %s on %s", self.model_name, self.device)
-        self._model = SentenceTransformer(self.model_name, device=self.device)
+        self._model, self.reused = _load_sentence_transformer(
+            SentenceTransformer,
+            self.model_name,
+            self.device,
+            cache_folder=self.cache_folder,
+            local_files_only=self.local_files_only,
+        )
 
     @property
     def dim(self) -> int:
@@ -446,8 +540,15 @@ class Embedder:
             return self._dim
         self._load()
         assert self._model is not None
-        # sentence-transformers exposes get_sentence_embedding_dimension(); fall
-        # back to encoding a probe string if missing (some mocks / forks).
+        # sentence-transformers >= 5 exposes get_embedding_dimension(); prefer
+        # it because get_sentence_embedding_dimension() now emits a FutureWarning.
+        getter = getattr(self._model, "get_embedding_dimension", None)
+        if callable(getter):
+            d = getter()
+            if isinstance(d, int) and d > 0:
+                self._dim = d
+                return d
+        # Narrow fallback for older sentence-transformers and existing tests.
         getter = getattr(self._model, "get_sentence_embedding_dimension", None)
         if callable(getter):
             d = getter()
@@ -478,6 +579,111 @@ class Embedder:
         return [v.tolist() for v in vectors]
 
 
+_MODEL_CACHE: dict[tuple[str, str, str, str], Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+_HF_WARNING_FILTER_INSTALLED = False
+_HF_WARNING_SEEN: set[str] = set()
+
+
+class _OnceHFWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not (
+            record.name == "huggingface_hub"
+            or record.name.startswith("huggingface_hub.")
+            or record.name == "sentence_transformers"
+            or record.name.startswith("sentence_transformers.")
+        ):
+            return True
+        message = record.getMessage()
+        lowered = message.lower()
+        if not any(
+            token in lowered
+            for token in (
+                "hf_token",
+                "hugging_face_hub_token",
+                "unauthenticated",
+                "rate limit",
+                "rate-limit",
+                "rate_limit",
+            )
+        ):
+            return True
+        key = " ".join(message.split())
+        if getattr(record, "_cortex_hf_warning_dedupe_key", None) == key:
+            return True
+        if key in _HF_WARNING_SEEN:
+            return False
+        _HF_WARNING_SEEN.add(key)
+        record._cortex_hf_warning_dedupe_key = key
+        return True
+
+
+def _install_hf_warning_filter() -> None:
+    global _HF_WARNING_FILTER_INSTALLED
+    filt = _OnceHFWarningFilter()
+    logger_names = {
+        "huggingface_hub",
+        "huggingface_hub.file_download",
+        "sentence_transformers",
+        "sentence_transformers.SentenceTransformer",
+    }
+    logger_names.update(
+        name
+        for name in logging.Logger.manager.loggerDict
+        if name == "huggingface_hub"
+        or name.startswith("huggingface_hub.")
+        or name == "sentence_transformers"
+        or name.startswith("sentence_transformers.")
+    )
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        for existing in list(logger.filters):
+            if isinstance(existing, _OnceHFWarningFilter):
+                logger.removeFilter(existing)
+        logger.addFilter(filt)
+    for handler in logging.getLogger().handlers:
+        for existing in list(handler.filters):
+            if isinstance(existing, _OnceHFWarningFilter):
+                handler.removeFilter(existing)
+        handler.addFilter(filt)
+    _HF_WARNING_FILTER_INSTALLED = True
+
+
+def _local_files_only_value(mode: str) -> bool:
+    return str(mode or "auto").lower() in {"true", "yes", "1", "on"}
+
+
+def _load_sentence_transformer(
+    constructor,
+    model_name: str,
+    device: str,
+    *,
+    cache_folder: Optional[Path],
+    local_files_only: str,
+) -> tuple[Any, bool]:
+    _install_hf_warning_filter()
+    cache_key = str(cache_folder) if cache_folder else ""
+    local_mode = str(local_files_only or "auto").lower()
+    key = (model_name, device, cache_key, local_mode)
+    with _MODEL_CACHE_LOCK:
+        cached = _MODEL_CACHE.get(key)
+        if cached is not None:
+            return cached, True
+    kwargs: dict[str, Any] = {"device": device}
+    if cache_folder is not None:
+        kwargs["cache_folder"] = str(cache_folder)
+    if local_mode != "auto":
+        kwargs["local_files_only"] = _local_files_only_value(local_mode)
+    model = constructor(model_name, **kwargs)
+    with _MODEL_CACHE_LOCK:
+        _MODEL_CACHE.setdefault(key, model)
+        return _MODEL_CACHE[key], False
+
+
+def _hf_token_present() -> bool:
+    return bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
+
+
 # ---- Top-level: embed_chunks ----------------------------------------------
 
 
@@ -493,7 +699,16 @@ def embed_chunks(cfg: Config, *, force: bool = False, batch_size: int = 32) -> E
     Refuses to run if the collection was built with a different model/dim.
     """
     device = detect_device(cfg.embeddings.device)
-    report = EmbedReport(device=device, model=cfg.embeddings.model)
+    cache_folder = cfg.embeddings.cache_folder
+    local_files_only = str(cfg.embeddings.local_files_only or "auto").lower()
+    report = EmbedReport(
+        device=device,
+        model=cfg.embeddings.model,
+        cache_folder=str(cache_folder) if cache_folder else "",
+        local_files_only=local_files_only,
+        hf_token_present=_hf_token_present(),
+        manifest_path=str(embedding_manifest_path(cfg)),
+    )
 
     chunks = load_chunks(cfg.index.chunks_path)
     report.chunks_total = len(chunks)
@@ -513,17 +728,8 @@ def embed_chunks(cfg: Config, *, force: bool = False, batch_size: int = 32) -> E
             report.chunks_over_token_threshold += 1
 
     collection = open_collection(cfg)
-
-    # Determine target dimension by lazy-loading the model. We need this BEFORE
-    # the compatibility check so we can compare against the recorded dim.
-    embedder = Embedder(cfg.embeddings.model, device)
-    target_dim = embedder.dim
-    report.embedding_dim = target_dim
-
-    # Refuse on model/dim mismatch (loud failure beats silent corruption).
-    _check_model_compatibility(collection, cfg.embeddings.model, target_dim)
-    # Stamp metadata (idempotent; no-op if already set to the same values).
-    _stamp_collection_meta(collection, cfg.embeddings.model, target_dim)
+    manifest = _read_embedding_manifest(cfg)
+    _check_manifest_model_compatibility(manifest, cfg.embeddings.model)
 
     # Always read the existing index — even on force=True — so orphan cleanup
     # works regardless of whether we're skipping unchanged chunks or not.
@@ -575,6 +781,41 @@ def embed_chunks(cfg: Config, *, force: bool = False, batch_size: int = 32) -> E
         except Exception as e:  # noqa: BLE001
             report.errors.append(("<delete orphans>", str(e)))
 
+    if not force and not to_embed_ids and not report.errors and manifest.get(COLLECTION_META_DIM):
+        report.embedding_dim = int(manifest[COLLECTION_META_DIM])
+        report.model_load_skipped_reason = "unchanged chunks; trusted sidecar manifest"
+        if orphans:
+            _write_embedding_manifest(
+                cfg,
+                model=cfg.embeddings.model,
+                dim=report.embedding_dim,
+                device=device,
+                cache_folder=report.cache_folder,
+                local_files_only=local_files_only,
+                ids=seen_ids,
+                hashes=_manifest_hashes_from_chunks(chunks),
+            )
+        return report
+
+    # Determine target dimension only when embedding work or initial metadata
+    # stamping needs it. This avoids repeated model initialization on the warm,
+    # all-unchanged path when the sidecar manifest is trusted.
+    embedder = Embedder(
+        cfg.embeddings.model,
+        device,
+        cache_folder=cache_folder,
+        local_files_only=local_files_only,
+    )
+    target_dim = embedder.dim
+    report.embedding_dim = target_dim
+    report.model_reused = embedder.reused
+
+    # Refuse on model/dim mismatch (loud failure beats silent corruption).
+    _check_manifest_dim_compatibility(manifest, cfg.embeddings.model, target_dim)
+    _check_model_compatibility(collection, cfg.embeddings.model, target_dim)
+    # Stamp metadata (idempotent; sidecar is authoritative, collection best-effort).
+    _stamp_collection_meta(collection, cfg.embeddings.model, target_dim)
+
     # Embed and upsert in batches.
     if to_embed_ids:
         for start in range(0, len(to_embed_ids), batch_size):
@@ -593,6 +834,18 @@ def embed_chunks(cfg: Config, *, force: bool = False, batch_size: int = 32) -> E
             except Exception as e:  # noqa: BLE001
                 for cid in ids_b:
                     report.errors.append((cid, str(e)))
+
+    if not report.errors:
+        _write_embedding_manifest(
+            cfg,
+            model=cfg.embeddings.model,
+            dim=target_dim,
+            device=device,
+            cache_folder=report.cache_folder,
+            local_files_only=local_files_only,
+            ids=seen_ids,
+            hashes=_manifest_hashes_from_chunks(chunks),
+        )
 
     return report
 

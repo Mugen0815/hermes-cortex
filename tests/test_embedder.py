@@ -7,6 +7,7 @@ runs fast without GPUs/internet. We test the orchestration logic.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -658,49 +659,100 @@ def test_embed_chunks_missing_id_reported(
     assert len(missing_errors) == 1
 
 
-# ---- _stamp_collection_meta logs on failure ------------------------------
+# ---- P8 sidecar/reuse/warning hygiene ------------------------------------
 
 
-def test_stamp_collection_meta_logs_warning_when_persist_fails(
-    caplog: pytest.LogCaptureFixture,
+def test_embed_chunks_writes_sidecar_manifest(tmp_path: Path, patched_chroma_and_st: FakeCollection) -> None:
+    from cortex.embedder import embedding_manifest_path
+
+    cfg = make_config(tmp_path, device="cpu")
+    write_chunks_file(cfg.index.chunks_path, SAMPLE_CHUNKS)
+
+    report = embed_chunks(cfg)
+    manifest = json.loads(embedding_manifest_path(cfg).read_text())
+
+    assert report.manifest_path == str(embedding_manifest_path(cfg))
+    assert manifest["embedding_model"] == "test-model"
+    assert manifest["embedding_dim"] == 4
+    assert manifest["chunk_count"] == 2
+
+
+def test_embed_chunks_unchanged_uses_manifest_without_model_load(
+    tmp_path: Path,
+    patched_chroma_and_st: FakeCollection,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When neither modify() nor attribute set works, we log loudly."""
-    from cortex.embedder import _stamp_collection_meta
+    cfg = make_config(tmp_path, device="cpu")
+    write_chunks_file(cfg.index.chunks_path, SAMPLE_CHUNKS)
+    embed_chunks(cfg)
 
-    class StubbornCollection:
-        # No `modify` method.
-        @property
-        def metadata(self):
-            return {"hnsw:space": "cosine"}
+    fake_st = __import__("sys").modules["sentence_transformers"]
+    fake_st.SentenceTransformer.reset_mock()
 
-        @metadata.setter
-        def metadata(self, _v):
-            raise RuntimeError("read-only collection")
+    report = embed_chunks(cfg)
 
-    with caplog.at_level("WARNING", logger="cortex.embedder"):
-        _stamp_collection_meta(StubbornCollection(), "model-x", 384)
-
-    assert any(
-        "Could not persist collection metadata" in r.message for r in caplog.records
-    )
+    assert report.chunks_embedded == 0
+    assert report.chunks_skipped_unchanged == 2
+    assert report.embedding_dim == 4
+    assert "trusted sidecar manifest" in report.model_load_skipped_reason
+    fake_st.SentenceTransformer.assert_not_called()
 
 
-def test_stamp_collection_meta_logs_warning_when_modify_fails(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from cortex.embedder import _stamp_collection_meta
+def test_embedder_prefers_supported_embedding_dimension_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
 
-    class FlakyCollection:
-        metadata: dict = {"hnsw:space": "cosine"}
+    fake_model = MagicMock()
+    fake_model.get_embedding_dimension.return_value = 4
+    fake_model.get_sentence_embedding_dimension.side_effect = AssertionError("deprecated API used")
+    fake_model.encode.return_value = np.array([[1.0, 0.0, 0.0, 0.0]])
+    fake_st = MagicMock()
+    fake_st.SentenceTransformer.return_value = fake_model
+    monkeypatch.setitem(__import__("sys").modules, "sentence_transformers", fake_st)
 
-        def modify(self, metadata=None, **kw):
-            raise RuntimeError("modify went boom")
+    from cortex.embedder import Embedder
 
-    with caplog.at_level("WARNING", logger="cortex.embedder"):
-        _stamp_collection_meta(FlakyCollection(), "model-x", 384)
+    assert Embedder("model", "cpu").dim == 4
 
-    # Either the modify-failure warning fires, or the fallback succeeded.
-    # We assert the modify-failure warning specifically.
-    assert any(
-        "collection.modify(metadata=...) failed" in r.message for r in caplog.records
-    )
+
+def test_same_process_embedder_reuses_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
+    import cortex.embedder as embedder_mod
+
+    embedder_mod._MODEL_CACHE.clear()
+    fake_model = MagicMock()
+    fake_model.get_embedding_dimension.return_value = 4
+    fake_model.encode.return_value = np.array([[1.0, 0.0, 0.0, 0.0]])
+    fake_st = MagicMock()
+    fake_st.SentenceTransformer.return_value = fake_model
+    monkeypatch.setitem(__import__("sys").modules, "sentence_transformers", fake_st)
+
+    first = embedder_mod.Embedder("model", "cpu")
+    second = embedder_mod.Embedder("model", "cpu")
+
+    assert first.dim == 4
+    assert second.dim == 4
+    assert first.reused is False
+    assert second.reused is True
+    assert fake_st.SentenceTransformer.call_count == 1
+
+
+def test_hf_warning_filter_dedupes_child_logger_token_warning(caplog: pytest.LogCaptureFixture) -> None:
+    import cortex.embedder as embedder_mod
+
+    embedder_mod._HF_WARNING_FILTER_INSTALLED = False
+    embedder_mod._HF_WARNING_SEEN.clear()
+    logger = logging.getLogger("huggingface_hub.file_download")
+    warning = "HF_TOKEN is not set; unauthenticated Hugging Face Hub requests may be rate limited"
+    unrelated = "Cache directory is read-only; using temporary download location"
+
+    with caplog.at_level("WARNING", logger="huggingface_hub"):
+        embedder_mod._install_hf_warning_filter()
+        embedder_mod._install_hf_warning_filter()
+        assert sum(isinstance(f, embedder_mod._OnceHFWarningFilter) for f in logger.filters) == 1
+        logger.warning(warning)
+        logger.warning(warning)
+        logger.warning(unrelated)
+
+    messages = [r.message for r in caplog.records]
+    assert messages.count(warning) == 1
+    assert messages.count(unrelated) == 1

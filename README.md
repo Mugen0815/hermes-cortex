@@ -463,28 +463,21 @@ index. Annoying, but empirical.
 
 ## Development
 
+For local setup, test gates, runtime plugin updates, and skill-sync workflow, see
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+
+Short path:
+
 ```bash
-cd ~/hermes-workspace/hermes-cortex
+cd ~/hermes-workspace/20_repos/hermes-cortex
 ./install.sh --dev
 source .venv/bin/activate
 ruff check .
-pytest
+TMP_HOME=$(mktemp -d)
+HERMES_HOME="$TMP_HOME" pytest
+rm -rf "$TMP_HOME"
 python -m build --no-isolation
 ```
-
-The GitHub Actions workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-runs the same basic release gate on pull requests and pushes to `main`: install the
-package with development dependencies, lint with Ruff, run the pytest suite, and
-build the Python package on Python 3.11 and 3.12.
-
-Development happens in the source checkout. Runtime uses the dedicated plugin
-checkout:
-
-| Role | Path |
-|---|---|
-| Development source | `~/hermes-workspace/hermes-cortex/` |
-| Hermes runtime plugin | `~/.hermes/plugins/cortex/` |
-| Vault | `~/hermes-workspace/vault/` |
 
 ## Release preflight
 
@@ -493,7 +486,9 @@ runs from a clean checkout:
 
 ```bash
 ruff check .
-pytest
+TMP_HOME=$(mktemp -d)
+HERMES_HOME="$TMP_HOME" pytest
+rm -rf "$TMP_HOME"
 python -m build --no-isolation
 git diff --check
 git grep -n "gitlab.skynet\|skynet-node\|/home/dennis\|jarvis@\|/opt/jarvis\|Dennis" -- . ':!README.md'

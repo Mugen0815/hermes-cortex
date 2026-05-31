@@ -5,24 +5,37 @@ description: "Retrieval procedure for the agent's memory system — lookup order
 
 # Memory Query Flow
 
-## Status — Core Rules moved to SOUL.md (2026-05-11)
+## Status — Runtime skill bootstrap is configuration-controlled (2026-05-31)
 
-**As of 2026-05-11, the core retrieval rules are in SOUL.md:**
-- Lookup order (SOUL → MEMORY/USER → vault → filesystem → sessions)
-- Source attribution (every answer must cite its source)
-- Auto-use cortex triggers
-- Post-write workflow (index → embed → Map-Note)
-- top_k pitfall (default 10 too low, always use 20+)
+Current post-P8 Cortex runtime uses semantic hook blocks. In the standard deployed
+configuration, this skill is intentionally injected every turn through:
 
-`load_skill: false` in `~/.hermes/cortex/config.yaml` — this skill is no longer
-auto-loaded. The hook (`_pre_llm_call`) still injects vault context every turn.
+```yaml
+hooks:
+  skill_context:
+    enabled: true
+    when: each_turn
+    load_skill: true
+```
+
+That hook loads `memory-query-flow` from the active/default profile skill path and
+injects it as **user-message hook context**. It is not a system prompt fragment,
+and it is separate from Vault hit injection. `recent_context`, `dynamic_context`,
+and `bootstrap_context` are separate channels and may be disabled while this skill
+bootstrap remains active.
+
+Legacy `hooks.context_injection.load_skill` can still appear in old configs, but
+it is ignored whenever semantic hook blocks are present. Check `hermes cortex
+status` or `hermes cortex config show` before assuming whether this skill is
+loaded automatically.
 
 ### When to load manually
 
 Call `skill_view('memory-query-flow')` when you need:
 - The `references/` files (ranking diagnostics, CLI gotchas, session perf)
 - The detailed failure pattern documentation (below)
-- You're in an environment without SOUL.md (fresh install, new profile)
+- You are in an environment/profile where `hooks.skill_context.load_skill` is false
+  or Cortex hook injection is not available
 
 ### Absolute triggers (check SOUL.md first — it's in your prompt):
 
@@ -52,21 +65,26 @@ user has explicitly criticised as incorrect behavior.
 Even when the question feels like "I need to look at code/config" — check the vault first.
 The vault exists specifically to cache the answers you'd otherwise have to grep for.
 
-**Failure #2 — Horn only fires on Turn 1 (cortex hook was turn-limited)**
+**Failure #2 — assuming the skill bootstrap is off because legacy config says so**
 
-1. The `_pre_llm_call` hook used to gate injection with `if not is_first_turn: return None`; current runtime lives in `plugin_runtime.py` and uses `hooks.context_injection.enabled`
-2. This meant the memory-query-flow skill + vault context were injected ONLY into Turn 1
-3. Hermes injects hook output into the **user message**, not the system prompt
-4. Ab Turn 2 war der Skill-Kontext weg — der Agent hatte keine Regeln mehr
+1. Older configs used `hooks.context_injection.load_skill`, and some historical
+   docs said `load_skill: false` meant this skill was no longer auto-loaded.
+2. Post-P8 configs use semantic hook blocks. The effective switch is now
+   `hooks.skill_context.enabled` + `hooks.skill_context.load_skill`.
+3. If that semantic block is enabled, `memory-query-flow` is injected every turn
+   even when the legacy `context_injection` block is disabled or ignored.
+4. Hermes injects hook output into the **user message**, not the system prompt, so
+   this is runtime context rather than durable prompt policy.
 
-**Fix (applied 2026-05-11):**
-- Core retrieval rules moved from this skill → **SOUL.md** (bleibt immer im System-Prompt)
-- `is_first_turn`-Guard entfernt → `_pre_llm_call` injectet vault context **jeden Turn**
-- `load_skill: false` in `~/.hermes/cortex/config.yaml` (redundant, da SOUL.md Regeln enthält)
+**Fix:** Do not infer behavior from stale legacy YAML. Run `hermes cortex status`
+and inspect the Hook lifecycle table:
 
-**Lesson:** Wenn du dich dabei erwischst, dass du immer wieder die gleiche Source laden musst,
-gehören die Regeln in SOUL.md — nicht in einen Hook oder Skill. Hooks sind ephemeral
-(user message, nicht system prompt). SOUL.md ist persistent.
+- `pre_llm skill_bootstrap yes/effective each_turn` → this skill is injected.
+- `legacy_context_injection ... legacy-ignored` → old `context_injection` keys are
+  compatibility baggage, not the active path.
+
+**Lesson:** Treat Cortex hook state as a lifecycle table, not a single boolean.
+The distinction is tedious, yes. It also prevents expensive ghost hunts.
 
 **Failure #3 — vault_search false negative (top_k blind spot)**
 
@@ -199,23 +217,31 @@ Check whether the new note should be linked from `60_maps/Map - Knowledge Index.
 
 ---
 
-## Automation / Guardrails — Deactivated (2026-05-11)
+## Automation / Guardrails — Semantic hook mode (current)
 
-`load_skill: false` in `~/.hermes/cortex/config.yaml` — this skill is no longer
-auto-loaded into the prompt on session start. Core rules now live in **SOUL.md**.
+In current semantic hook mode, the `memory-query-flow` skill may be auto-loaded on
+each turn by the Cortex `skill_context` block:
 
-The cortex `_pre_llm_call` hook still runs every turn to inject vault context
-(query-based project/decision/task summaries), but does NOT load this skill.
+```yaml
+hooks:
+  skill_context:
+    enabled: true
+    when: each_turn
+    load_skill: true
+```
+
+The hook output is injected into the **user message**, not the system prompt. This
+means it is excellent for runtime guardrails and operational reminders, but it is
+not a replacement for truly durable profile/system policy.
 
 ### What this means for you
 
-1. The core retrieval rules are in **SOUL.md** — read them there
-2. Load this skill manually (`skill_view`) when you need references/ or detailed
-   failure pattern docs
-3. If SOUL.md rules seem incomplete or wrong, fix SOUL.md — not this skill
-
-### Architecture note: why auto-injection was removed
-
-The `_pre_llm_call` hook injects into the **user message**, not the system prompt,
-and Hermes' `is_first_turn` guard meant it only fired on Turn 1. From Turn 2 onward
-the skill was invisible. Moving rules to SOUL.md guarantees they're always present.
+1. Check `hermes cortex status` for the effective hook lifecycle before debugging
+   memory behavior.
+2. If `skill_bootstrap` is effective, this skill is already present in hook
+   context; still call `skill_view` when you need linked `references/` files.
+3. If the rules here are wrong, fix this skill in the repo and reinstall/sync
+   skills into the runtime profile. If profile policy is wrong, fix the profile
+   bootstrap separately.
+4. Keep `recent_context` and `dynamic_context` conceptually separate: they inject
+   retrieved content, while `skill_context` injects retrieval procedure.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cortex.config import (
     Config,
@@ -202,6 +203,13 @@ def test_defaults_when_optional_sections_omitted(tmp_path: Path) -> None:
     assert cfg.hooks.context_injection_budget == 1000
     assert cfg.hooks.context_injection_query == ""
     assert cfg.hooks.load_skill is True
+    assert cfg.hooks.recent_context.enabled is False
+    assert cfg.hooks.recent_context.source == "sessiondb"
+    assert cfg.hooks.recent_context.lookback_days == 7
+    assert cfg.hooks.recent_context.max_sessions == 500
+    assert cfg.hooks.recent_context.max_groups == 8
+    assert cfg.hooks.recent_context.exclude_sources == ["cron", "api_server"]
+    assert cfg.hooks.recent_context.query_hint is False
     assert cfg.cron.nightly_promotion.enabled is False
     assert cfg.cron.nightly_promotion.name == "hermes-cortex-nightly-promotion"
     assert cfg.cron.nightly_promotion.schedule == "0 2 * * *"
@@ -226,6 +234,28 @@ def test_defaults_when_optional_sections_omitted(tmp_path: Path) -> None:
     assert cfg.cron.weekly_review.stale_days == 180
     assert cfg.cron.weekly_review.stale_min_importance == 4.0
     assert cfg.cron.weekly_review.consolidation_min_degree == 3
+
+
+def test_public_example_recent_context_matches_sessiondb_defaults() -> None:
+    example_path = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    raw = yaml.safe_load(example_path.read_text())
+    recent = raw["hooks"]["recent_context"]
+
+    assert recent == {
+        "enabled": False,
+        "when": "first_turn",
+        "source": "sessiondb",
+        "budget": 1000,
+        "state_db_path": "~/.hermes/state.db",
+        "lookback_days": 7,
+        "max_sessions": 500,
+        "max_groups": 8,
+        "include_sources": [],
+        "exclude_sources": ["cron", "api_server"],
+        "diagnostics": True,
+        "query_hint": False,
+    }
+    assert "disabled_placeholder" not in example_path.read_text()
 
 
 def test_find_config_via_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cfg_file: Path) -> None:
@@ -445,9 +475,17 @@ hooks:
       - {{label: alpha, path: {a}, order: 20, max_bytes: 20}}
       - {{label: disabled, path: {c}, order: 1, enabled: false}}
   recent_context:
-    enabled: false
+    enabled: true
     budget: 333
-    source: session_summary
+    source: sessiondb
+    state_db_path: {tmp_path}/state.db
+    lookback_days: 14
+    max_sessions: 123
+    max_groups: 4
+    include_sources: [tui, cli]
+    exclude_sources: [cron]
+    diagnostics: false
+    query_hint: true
   dynamic_context:
     enabled: false
     budget: 444
@@ -458,7 +496,15 @@ hooks:
     assert cfg.hooks.skill_context.budget == 321
     assert cfg.hooks.skill_context.skill_path == "/tmp/custom-skill/SKILL.md"
     assert cfg.hooks.bootstrap_context.budget == 222
-    assert cfg.hooks.recent_context.source == "session_summary"
+    assert cfg.hooks.recent_context.source == "sessiondb"
+    assert cfg.hooks.recent_context.state_db_path == (tmp_path / "state.db").resolve()
+    assert cfg.hooks.recent_context.lookback_days == 14
+    assert cfg.hooks.recent_context.max_sessions == 123
+    assert cfg.hooks.recent_context.max_groups == 4
+    assert cfg.hooks.recent_context.include_sources == ["tui", "cli"]
+    assert cfg.hooks.recent_context.exclude_sources == ["cron"]
+    assert cfg.hooks.recent_context.diagnostics is False
+    assert cfg.hooks.recent_context.query_hint is True
     assert cfg.hooks.dynamic_context.query == ""
     assert [e.label for e in cfg.hooks.bootstrap_context.include_static_files] == [
         "disabled",
@@ -518,6 +564,79 @@ hooks:
     assert cfg.hooks.context_injection_query == ""
     assert cfg.hooks.load_skill is True
     assert cfg.hooks.skill_path == "/tmp/new/SKILL.md"
+
+
+def test_hook_statuses_explain_semantic_runtime_and_ignored_legacy(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, """
+hooks:
+  context_injection:
+    enabled: true
+    load_skill: false
+  skill_context:
+    enabled: true
+    load_skill: true
+  bootstrap_context:
+    enabled: true
+  dynamic_context:
+    enabled: true
+    budget: 500
+"""))
+    assert cfg.hooks.uses_semantic_runtime() is True
+    statuses = {row.name: row for row in cfg.hooks.hook_statuses()}
+    assert statuses["cache_warm"].phase == "session_start"
+    assert statuses["skill_bootstrap"].effective is True
+    assert statuses["static_file_bootstrap"].effective is False
+    assert statuses["static_file_bootstrap"].skipped_reason == "no static files configured"
+    assert statuses["dynamic_context"].effective is True
+    assert statuses["legacy_context_injection"].enabled is True
+    assert statuses["legacy_context_injection"].effective is False
+    assert statuses["legacy_context_injection"].origin == "legacy-ignored"
+    assert "semantic hook blocks" in statuses["legacy_context_injection"].skipped_reason
+
+
+def test_hook_statuses_keep_legacy_only_configs_active(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, """
+hooks:
+  context_injection:
+    enabled: true
+    load_skill: false
+"""))
+    assert cfg.hooks.uses_semantic_runtime() is False
+    statuses = {row.name: row for row in cfg.hooks.hook_statuses()}
+    assert "skill_bootstrap" not in statuses
+    assert statuses["legacy_context_injection"].enabled is True
+    assert statuses["legacy_context_injection"].effective is True
+    assert statuses["legacy_context_injection"].origin == "legacy-active"
+
+
+def test_hook_statuses_show_absent_legacy_for_default_semantic_runtime(tmp_path: Path) -> None:
+    cfg = load_config(_minimal_hooks_cfg(tmp_path, ""))
+    assert cfg.hooks.uses_semantic_runtime() is True
+    statuses = {row.name: row for row in cfg.hooks.hook_statuses()}
+    assert statuses["legacy_context_injection"].enabled is False
+    assert statuses["legacy_context_injection"].effective is False
+    assert statuses["legacy_context_injection"].origin == "legacy-absent"
+    assert statuses["legacy_context_injection"].skipped_reason == "not configured"
+
+
+@pytest.mark.parametrize(
+    ("block", "bad_when", "match"),
+    [
+        ("skill_context", "session_start", "hooks.skill_context.when"),
+        ("bootstrap_context", "each_turn", "hooks.bootstrap_context.when"),
+        ("recent_context", "each_turn", "hooks.recent_context.when"),
+        ("dynamic_context", "first_turn", "hooks.dynamic_context.when"),
+    ],
+)
+def test_hook_context_when_values_are_validated(
+    tmp_path: Path, block: str, bad_when: str, match: str
+) -> None:
+    with pytest.raises(ConfigError, match=match):
+        load_config(_minimal_hooks_cfg(tmp_path, f"""
+hooks:
+  {block}:
+    when: {bad_when}
+"""))
 
 
 def test_static_file_optional_missing_allowed_required_missing_raises(tmp_path: Path) -> None:

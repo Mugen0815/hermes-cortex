@@ -127,11 +127,14 @@ def _cmd_embed(args: argparse.Namespace) -> int:
     print(f"Chroma path:  {cfg.index.chroma_path}")
     print(f"Model:        {cfg.embeddings.model}")
     print(f"Device:       {cfg.embeddings.device} (will auto-resolve)")
+    print(f"Model cache:  {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
+    print(f"Local files:  {cfg.embeddings.local_files_only}")
     try:
         report = embed_chunks(cfg, force=args.force, batch_size=args.batch_size)
     except ModelMismatchError as e:
         return print_error(f"\n  \u2717  {e}", exit_code=2)
     print(report.summary())
+    print(f"Manifest:     {report.manifest_path}")
     if report.errors:
         print(f"\n  Errors ({len(report.errors)}):")
         for cid, err in report.errors[:10]:
@@ -587,6 +590,24 @@ def _static_file_summary(entry) -> str:
     return "; ".join(bits)
 
 
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _print_hook_lifecycle(cfg, *, indent: str = "") -> None:
+    print(f"{indent}Hook lifecycle:")
+    print(f"{indent}  Runtime mode: {'semantic' if cfg.hooks.uses_semantic_runtime() else 'legacy'}")
+    print(f"{indent}  Phase         Name                      Enabled  Effective  Timing         Origin           Skipped reason")
+    for row in cfg.hooks.hook_statuses():
+        skipped = row.skipped_reason or "-"
+        print(
+            f"{indent}  {row.phase:<13} {row.name:<25} "
+            f"{_yes_no(row.enabled):<8} {_yes_no(row.effective):<10} "
+            f"{row.timing:<14} {row.origin:<16} {skipped}"
+        )
+        print(f"{indent}    source: {row.source}; payload: {row.payload}; target: {row.target}")
+
+
 def _cmd_config_path(args: argparse.Namespace) -> int:
     from cortex.config import find_config
 
@@ -597,6 +618,28 @@ def _cmd_config_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def _recent_context_summary(cfg) -> str:
+    recent = cfg.hooks.recent_context
+    bits = [
+        f"source={recent.source}",
+        f"lookback_days={recent.lookback_days}",
+        f"max_groups={recent.max_groups}",
+        f"exclude_sources={','.join(recent.exclude_sources) or '(none)'}",
+    ]
+    if recent.state_db_path:
+        bits.append(f"state_db_path={recent.state_db_path}")
+    if not recent.enabled:
+        bits.append("skipped=disabled")
+        return "; ".join(bits)
+    try:
+        from cortex.recent_context import build_recent_context, render_diagnostics
+
+        bits.append(render_diagnostics(build_recent_context(recent).diagnostics))
+    except Exception as exc:
+        bits.append(f"skipped=status diagnostic failed: {type(exc).__name__}: {exc}")
+    return "; ".join(bits)
+
+
 def _cmd_config_show(args: argparse.Namespace) -> int:
     cfg = resolve_config(getattr(args, "config", None))
     print(f"Config:          {cfg.source_path}")
@@ -605,6 +648,8 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     print(f"Chroma:          {cfg.index.chroma_path}")
     print(f"Collection:      {cfg.index.collection}")
     print(f"Embeddings:      {cfg.embeddings.model} ({cfg.embeddings.device})")
+    print(f"Embedding cache: {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
+    print(f"Embed local:     {cfg.embeddings.local_files_only}")
     print(f"Cache warm:      {cfg.hooks.cache_warm_enabled}")
     print(
         f"Skill context:   {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when}); "
@@ -616,10 +661,9 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
         f"Bootstrap ctx:   {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when}); "
         f"budget={cfg.hooks.bootstrap_context.budget}"
     )
-    recent_skip = "; skipped=placeholder only" if cfg.hooks.recent_context.enabled else ""
     print(
         f"Recent context:  {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.when}); "
-        f"source={cfg.hooks.recent_context.source}{recent_skip}"
+        f"{_recent_context_summary(cfg)}"
     )
     print(f"Dynamic context: {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when})")
     print(f"Dynamic budget:  {cfg.hooks.dynamic_context.budget}")
@@ -631,6 +675,7 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     print(f"Runtime projection: {cfg.hooks.context_injection_enabled}")
     print(f"Load skill:      {cfg.hooks.load_skill}")
     print(f"Skill path:      {cfg.hooks.skill_path or '(default profile skill path)'}")
+    _print_hook_lifecycle(cfg)
     return 0
 
 
@@ -643,6 +688,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"  Vault:          {cfg.vault.path} ({'ok' if cfg.vault.path.exists() else 'missing'})")
     print(f"  Chunks:         {cfg.index.chunks_path} ({'ok' if cfg.index.chunks_path.exists() else 'missing'})")
     print(f"  Chroma:         {cfg.index.chroma_path} ({'ok' if cfg.index.chroma_path.exists() else 'missing'})")
+    print(f"  Embeddings:     {cfg.embeddings.model} ({cfg.embeddings.device})")
+    print(f"  Embedding cache: {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
+    print(f"  Embed local:    {cfg.embeddings.local_files_only}")
     print(f"  Cache warm:     {cfg.hooks.cache_warm_enabled}")
     print(
         f"  Skill context:  {cfg.hooks.skill_context.enabled} ({cfg.hooks.skill_context.when}); "
@@ -652,10 +700,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         f"  Bootstrap ctx:  {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when}); "
         f"budget={cfg.hooks.bootstrap_context.budget}"
     )
-    recent_skip = "; skipped=placeholder only" if cfg.hooks.recent_context.enabled else ""
     print(
         f"  Recent context: {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.when}); "
-        f"source={cfg.hooks.recent_context.source}{recent_skip}"
+        f"{_recent_context_summary(cfg)}"
     )
     print(
         f"  Dynamic ctx:    {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when}); "
@@ -667,6 +714,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"    - {_static_file_summary(entry)}")
     print(f"  Legacy context: {_legacy_context_label(cfg)}")
     print(f"  Load skill:     {cfg.hooks.load_skill}")
+    _print_hook_lifecycle(cfg, indent="  ")
     return 0
 
 

@@ -61,7 +61,11 @@ Hermes loads Cortex as a standalone directory plugin:
 The active runtime source is the plugin checkout itself. Keep that checkout in sync
 with the development repo via `git pull --ff-only origin main` inside
 `~/.hermes/plugins/cortex/`; otherwise the `hermes cortex ...` command surface can
-lag behind `python -m cortex.cli ...`. The runtime smoke check is:
+lag behind `python -m cortex.cli ...`. Hook code/config is also process-local:
+already-started TUI sessions, Hermes gateway processes, and Kanban workers may
+retain the old hook behavior until a new session/process starts or an
+operator-approved restart picks up the updated plugin checkout/config. The
+runtime smoke check is:
 
 ```bash
 scripts/smoke-runtime-cortex-cli.sh
@@ -88,13 +92,19 @@ Runtime hook context is split semantically:
 - `skill_context` — each-turn runtime rules and skill bootstrap
 - `bootstrap_context` — first-turn static context, including deterministic
   `include_static_files`
-- `recent_context` — disabled placeholder in this cutover; no SessionDB/topic
-  condenser here
+- `recent_context` — disabled by default but SessionDB-capable deterministic
+  recent-topic metadata context
 - `dynamic_context` — gated/off-by-default user-message Vault context
 
 New semantic blocks take precedence over the legacy `hooks.context_injection`
 block. Legacy configs still parse for compatibility, but they are treated as a
-fallback path, not the primary model.
+fallback path, not the primary model. `cortex status` and `cortex config show`
+render this as hook lifecycle rows with explicit `enabled`, `effective`, timing,
+origin, source/payload/target, and skipped reason. A legacy-only config reports
+`legacy_context_injection` as `legacy-active`; a mixed semantic+legacy config
+reports it as `legacy-ignored`; a config with no legacy block reports it as
+`legacy-absent`. `when` is validated per semantic block so impossible lifecycle
+combinations fail during config load rather than quietly drifting at runtime.
 
 ## Nightly/session promotion
 

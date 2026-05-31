@@ -35,6 +35,8 @@ index:
 embeddings:
   model: sentence-transformers/all-MiniLM-L6-v2
   device: auto  # 'auto' picks cuda > mps > cpu; or set 'cpu', 'cuda', 'mps'
+  cache_folder: null  # null = sentence-transformers default; or set a path such as ~/.cache/huggingface
+  local_files_only: auto  # auto = sentence-transformers default; true/yes/1/on forces offline cache-only loading
 
 search:
   top_k: 20
@@ -133,12 +135,21 @@ hooks:
         max_bytes: 8000
         optional: true
 
-  # Placeholder only in this slice. Do not wire SessionDB/query/topic condenser here.
+  # SessionDB-backed recent-topic context. Disabled by default; enable to prepend
+  # deterministic session metadata (titles/sources/timestamps only) on first turn.
   recent_context:
     enabled: false
     when: first_turn
-    source: disabled_placeholder
+    source: sessiondb
     budget: 1000
+    state_db_path: ~/.hermes/state.db
+    lookback_days: 7
+    max_sessions: 500
+    max_groups: 8
+    include_sources: []
+    exclude_sources: [cron, api_server]
+    diagnostics: true
+    query_hint: false
 
   # Dynamic user-message Vault context. Gated/off by default; empty query means
   # runtime may derive from the current user message only when this block is enabled.

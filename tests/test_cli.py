@@ -99,6 +99,30 @@ hooks:
     assert "Legacy context:  True (deprecated/ignored)" in out
 
 
+def test_status_prints_hook_lifecycle_table(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cfg = _setup(tmp_path)
+    cfg.write_text(
+        cfg.read_text()
+        + """
+hooks:
+  context_injection:
+    enabled: true
+  dynamic_context:
+    enabled: true
+    budget: 123
+"""
+    )
+    rc = main(["status", "--config", str(cfg)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Hook lifecycle:" in out
+    assert "Runtime mode: semantic" in out
+    assert "dynamic_context" in out
+    assert "legacy_context_injection" in out
+    assert "legacy-ignored" in out
+    assert "ignored because semantic hook blocks are present" in out
+
+
 def test_cli_index_subcommand(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     cfg = _setup(tmp_path)
     rc = main(["index", "--config", str(cfg)])

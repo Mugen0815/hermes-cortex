@@ -129,7 +129,10 @@ git pull --ff-only origin main
 scripts/smoke-runtime-cortex-cli.sh
 ```
 
-Then start a new Hermes session or `/reset` the current one.
+Then start a new Hermes session or `/reset` the current one. Hook code/config is
+process-local: already-started TUI sessions, gateway processes, and Kanban
+workers can retain old hook behavior until they start a new session/process or an
+operator-approved restart picks up the updated plugin checkout/config.
 
 ## Common commands
 
@@ -144,8 +147,8 @@ Then start a new Hermes session or `/reset` the current one.
 | `hermes cortex search-eval --output search-eval-baseline.json --baseline baseline.json --allow-failures` | Run fixed ranking eval cases with per-hit diagnostics (`final_score`, `rrf_score`, channel ranks, raw/capped boost multiplier, quality factor/reason); `--baseline` adds compare summary and baseline deltas |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
 | `hermes cortex config path` | Show active config path |
-| `hermes cortex config show` | Show effective config: vault, index, hooks, skill path |
-| `hermes cortex status` | Show plugin/code path plus config, vault, and index state |
+| `hermes cortex config show` | Show effective config: vault, index, hooks, skill path, and hook lifecycle rows |
+| `hermes cortex status` | Show plugin/code path plus config, vault, index state, and effective hook lifecycle/status |
 | `hermes cortex graph status` | Show graph health and diagnostics |
 | `hermes cortex graph viewer -o graph.html --embed-data` | Generate a static graph viewer |
 | `hermes cortex lifecycle maintenance` | Run index → embed → graph build |
@@ -154,6 +157,51 @@ Then start a new Hermes session or `/reset` the current one.
 | `hermes cortex cron status` | Check all installed Cortex cron jobs |
 | `hermes cortex cron status --job nightly` | Check only the nightly promotion cron job |
 | `hermes cortex cron status --job weekly` | Check only the WeeklyReview cron job |
+
+## Hook lifecycle status
+
+`cortex config show` and `cortex status` now print an operator-facing hook
+lifecycle table. It separates lifecycle phases from legacy projection fields:
+
+- `cache_warm` runs at `session_start` and only warms process-local cache.
+- `skill_bootstrap`, `static_file_bootstrap`, `recent_context`, and
+  `dynamic_context` describe `pre_llm` user-message hook context.
+- `recent_context` is deterministic SessionDB metadata context: it reads session
+  titles/sources/timestamps only, never transcript/message bodies and never calls
+  an LLM. It defaults to `source: sessiondb` with `cron` and `api_server`
+  excluded.
+- `legacy_context_injection` is still displayed for compatibility. In a
+  legacy-only config it is `legacy-active`; when any semantic hook block is
+  configured it is `legacy-ignored` and the skipped reason says why. If absent,
+  it is shown as `legacy-absent`.
+
+The table shows `enabled`, `effective`, timing (`first_turn`, `each_turn`, or
+`session_start`), origin, source, payload, target, and skipped reason. Supported
+`when` values are validated per block: `skill_context` accepts `first_turn` or
+`each_turn`; `bootstrap_context` and `recent_context` accept only `first_turn`;
+`dynamic_context` accepts only `each_turn`.
+
+The lifecycle table describes behavior for sessions/processes that loaded the
+current plugin code and config. Already-running TUI sessions, Hermes gateway
+processes, and Kanban workers may retain older hook code/config until a new
+session/process starts or an operator-approved restart is performed.
+
+## Embedding cache hygiene
+
+P8 is now documented as explicit cache/reuse plumbing instead of silent hope:
+
+- `embeddings.cache_folder` makes the SentenceTransformer cache path visible.
+- `embeddings.local_files_only` is `auto` by default, so a warm cache can be
+  reused without pretending the network is magical; explicit `true` forces
+  offline-only behavior.
+- `embedding_manifest.json` is the sidecar next to the Chroma store that holds
+  model/dim metadata for skip decisions.
+- `cortex embed` / `hermes cortex status` report whether the model was reused
+  and which cache mode is active. No `HF_TOKEN` is required, and token values
+  are not logged.
+- HF / SentenceTransformer warning spam is deduped across the logger tree,
+  including child loggers, so the unauthenticated warning shows once instead of
+  being spammed like it wants a bigger budget.
 
 ## Nightly promotion lifecycle
 
@@ -320,7 +368,15 @@ hooks:
   recent_context:
     enabled: false
     when: first_turn
-    source: disabled_placeholder
+    source: sessiondb
+    budget: 1000
+    lookback_days: 7
+    max_sessions: 500
+    max_groups: 8
+    include_sources: []
+    exclude_sources: [cron, api_server]
+    diagnostics: true
+    query_hint: false
   dynamic_context:
     enabled: false
     when: each_turn

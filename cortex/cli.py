@@ -615,6 +615,28 @@ def _cmd_config_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def _recent_context_summary(cfg) -> str:
+    recent = cfg.hooks.recent_context
+    bits = [
+        f"source={recent.source}",
+        f"lookback_days={recent.lookback_days}",
+        f"max_groups={recent.max_groups}",
+        f"exclude_sources={','.join(recent.exclude_sources) or '(none)'}",
+    ]
+    if recent.state_db_path:
+        bits.append(f"state_db_path={recent.state_db_path}")
+    if not recent.enabled:
+        bits.append("skipped=disabled")
+        return "; ".join(bits)
+    try:
+        from cortex.recent_context import build_recent_context, render_diagnostics
+
+        bits.append(render_diagnostics(build_recent_context(recent).diagnostics))
+    except Exception as exc:
+        bits.append(f"skipped=status diagnostic failed: {type(exc).__name__}: {exc}")
+    return "; ".join(bits)
+
+
 def _cmd_config_show(args: argparse.Namespace) -> int:
     cfg = resolve_config(getattr(args, "config", None))
     print(f"Config:          {cfg.source_path}")
@@ -634,10 +656,9 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
         f"Bootstrap ctx:   {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when}); "
         f"budget={cfg.hooks.bootstrap_context.budget}"
     )
-    recent_skip = "; skipped=placeholder only" if cfg.hooks.recent_context.enabled else ""
     print(
         f"Recent context:  {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.when}); "
-        f"source={cfg.hooks.recent_context.source}{recent_skip}"
+        f"{_recent_context_summary(cfg)}"
     )
     print(f"Dynamic context: {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when})")
     print(f"Dynamic budget:  {cfg.hooks.dynamic_context.budget}")
@@ -671,10 +692,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         f"  Bootstrap ctx:  {cfg.hooks.bootstrap_context.enabled} ({cfg.hooks.bootstrap_context.when}); "
         f"budget={cfg.hooks.bootstrap_context.budget}"
     )
-    recent_skip = "; skipped=placeholder only" if cfg.hooks.recent_context.enabled else ""
     print(
         f"  Recent context: {cfg.hooks.recent_context.enabled} ({cfg.hooks.recent_context.when}); "
-        f"source={cfg.hooks.recent_context.source}{recent_skip}"
+        f"{_recent_context_summary(cfg)}"
     )
     print(
         f"  Dynamic ctx:    {cfg.hooks.dynamic_context.enabled} ({cfg.hooks.dynamic_context.when}); "

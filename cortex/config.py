@@ -215,7 +215,15 @@ class RecentContextConfig:
     enabled: bool = False
     budget: int = 1000
     when: str = "first_turn"
-    source: str = "disabled_placeholder"
+    source: str = "sessiondb"
+    state_db_path: Optional[Path] = None
+    lookback_days: int = 7
+    max_sessions: int = 500
+    max_groups: int = 8
+    include_sources: list[str] = field(default_factory=list)
+    exclude_sources: list[str] = field(default_factory=lambda: ["cron", "api_server"])
+    diagnostics: bool = True
+    query_hint: bool = False
 
 
 @dataclass
@@ -391,15 +399,19 @@ class HooksConfig:
                 phase="pre_llm",
                 name="recent_context",
                 enabled=recent.enabled,
-                effective=False,
+                effective=recent.enabled and recent.budget > 0,
                 timing=recent.when,
                 source=recent.source or "SessionDB",
-                payload="SessionDB recent topic context",
+                payload=(
+                    f"SessionDB recent topic context budget={recent.budget}; "
+                    f"lookback_days={recent.lookback_days}; max_groups={recent.max_groups}"
+                ),
                 target="user-message hook context",
                 origin=origin,
                 skipped_reason=(
                     "disabled" if not recent.enabled
-                    else "placeholder only; SessionDB recent-context query is not implemented"
+                    else "budget <= 0" if recent.budget <= 0
+                    else ""
                 ),
             ))
 
@@ -573,11 +585,31 @@ def _parse_bootstrap_context(raw: dict[str, Any]) -> BootstrapContextConfig:
 
 def _parse_recent_context(raw: dict[str, Any]) -> RecentContextConfig:
     default = RecentContextConfig()
+    budget = int(raw.get("budget", default.budget))
+    if budget < 0:
+        raise ConfigError("hooks.recent_context.budget must be >= 0")
+    lookback_days = int(raw.get("lookback_days", default.lookback_days))
+    if lookback_days < 1:
+        raise ConfigError("hooks.recent_context.lookback_days must be >= 1")
+    max_sessions = int(raw.get("max_sessions", default.max_sessions))
+    if max_sessions < 1:
+        raise ConfigError("hooks.recent_context.max_sessions must be >= 1")
+    max_groups = int(raw.get("max_groups", default.max_groups))
+    if max_groups < 1:
+        raise ConfigError("hooks.recent_context.max_groups must be >= 1")
     return RecentContextConfig(
         enabled=_to_bool(raw.get("enabled"), default=default.enabled),
-        budget=int(raw.get("budget", default.budget)),
+        budget=budget,
         when=_validate_when(raw.get("when", default.when), "hooks.recent_context", {"first_turn"}),
         source=str(raw.get("source", default.source)),
+        state_db_path=_expand(raw.get("state_db_path")),
+        lookback_days=lookback_days,
+        max_sessions=max_sessions,
+        max_groups=max_groups,
+        include_sources=_as_str_list(raw.get("include_sources", default.include_sources), "hooks.recent_context.include_sources"),
+        exclude_sources=_as_str_list(raw.get("exclude_sources", default.exclude_sources), "hooks.recent_context.exclude_sources"),
+        diagnostics=_to_bool(raw.get("diagnostics"), default=default.diagnostics),
+        query_hint=_to_bool(raw.get("query_hint"), default=default.query_hint),
     )
 
 

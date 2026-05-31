@@ -492,14 +492,16 @@ hooks:
     assert plugin_runtime._pre_llm_call(user_message="user", is_first_turn=True) is None
 
 
-def test_pre_llm_recent_context_is_placeholder_only(tmp_path: Path, monkeypatch) -> None:
-    cfg_path = _runtime_cfg(tmp_path, """
+def test_pre_llm_recent_context_reports_missing_state_db(tmp_path: Path, monkeypatch) -> None:
+    missing_db = tmp_path / "missing-state.db"
+    cfg_path = _runtime_cfg(tmp_path, f"""
 hooks:
   skill_context:
     enabled: false
   recent_context:
     enabled: true
-    source: session_summary
+    source: sessiondb
+    state_db_path: {missing_db}
   dynamic_context:
     enabled: false
 """)
@@ -507,14 +509,14 @@ hooks:
     monkeypatch.setattr(
         plugin_runtime,
         "_vault_build_context",
-        lambda **kwargs: pytest.fail("recent_context must not query vault or SessionDB"),
+        lambda **kwargs: pytest.fail("recent_context must not query vault"),
     )
 
     out = plugin_runtime._pre_llm_call(user_message="user", is_first_turn=True)
 
     assert out is not None
     assert "skipped recent_context" in out
-    assert "SessionDB recent-context query is not implemented" in out
+    assert "state_db not found" in out
 
 
 def test_pre_llm_recent_context_first_turn_skips_later_turn(
@@ -535,7 +537,7 @@ hooks:
     monkeypatch.setattr(
         plugin_runtime,
         "_vault_build_context",
-        lambda **kwargs: pytest.fail("recent_context must not query vault or SessionDB"),
+        lambda **kwargs: pytest.fail("recent_context must not query vault"),
     )
 
     first = plugin_runtime._pre_llm_call(user_message="user", is_first_turn=True)

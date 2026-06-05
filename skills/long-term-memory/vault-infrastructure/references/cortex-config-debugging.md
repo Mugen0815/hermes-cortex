@@ -13,20 +13,22 @@ If `CORTEX_CONFIG` is unset, `load_config(None)` calls `find_config()`, which
 searches in order:
 
 ```python
-_CONFIG_SEARCH_PATHS = [
-    Path.cwd() / "config.yaml",                           # 1. CWD — FRAGILE
-    _hermes_home() / "cortex" / "config.yaml",            # 2. profile/default Hermes home
-    Path.home() / ".hermes" / "cortex" / "config.yaml",   # 3. default fallback for profiles
-    Path.home() / ".config" / "hermes-cortex" / "config.yaml", # 4. fallback
+[
+    _hermes_home() / "cortex" / "config.yaml",            # 1. profile/default Hermes home
+    Path.home() / ".hermes" / "cortex" / "config.yaml",   # 2. default fallback for profiles
+    Path.home() / ".config" / "hermes-cortex" / "config.yaml", # 3. fallback
+    Path.cwd() / "config.yaml",                           # 4. standalone/project fallback
 ]
 ```
 
 ### Pitfalls
 
-- **CWD wins.** If Hermes starts from a directory that has its own `config.yaml`
-  (e.g. the cortex repo root, a project directory), THAT config is used instead
-  of `~/.hermes/cortex/config.yaml`. There is no log message saying *which*
-  config won.
+- **Gateway CWD trap (fixed in June 2026).** Older Cortex builds searched
+  `Path.cwd() / "config.yaml"` first. When the Hermes gateway ran with
+  `cwd=$HERMES_HOME`, Cortex parsed `~/.hermes/config.yaml` as a Cortex config and
+  failed with missing `vault.path` / `index.*` settings. If this reappears, check
+  that `find_config()` resolves `~/.hermes/cortex/config.yaml`, not
+  `~/.hermes/config.yaml`.
 - **No env-var fallback logging.** `_config_path()` returns `None` silently when
   `CORTEX_CONFIG` is not set. The caller has no way to distinguish "env var
   unset" from "env var explicitly pointing to nothing".
@@ -86,7 +88,7 @@ grep -E 'cortex\.(plugin_runtime|hermes_plugin):.*(warmed|Injected|hooks config)
 #   → Or config at wrong path was loaded (see config path section above)
 ```
 
-## Known issues (as of May 2026)
+## Known issues (as of June 2026)
 
 1. **No `source_path` logging.** `load_config()` stores `source_path` on the
    Config object but nothing logs it. Consider adding a one-liner in
@@ -95,6 +97,3 @@ grep -E 'cortex\.(plugin_runtime|hermes_plugin):.*(warmed|Injected|hooks config)
    callers (`load_config(None)`) have different semantics than `load_config("")`.
    The function should arguably return `Optional[str]` with `None` meaning
    "autodiscover" and `""` being rejected explicitly.
-3. **CWD-first search order.** `Path.cwd() / "config.yaml"` at position 0 in
-   `_CONFIG_SEARCH_PATHS` is unexpected for most users. Moving it to position 2
-   (after `~/.hermes/cortex/config.yaml`) would be safer.

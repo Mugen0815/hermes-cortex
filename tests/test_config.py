@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import cortex.config as cortex_config
 from cortex.config import (
     Config,
     ConfigError,
@@ -268,6 +269,30 @@ def test_find_config_env_missing_file_raises(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setenv("CORTEX_CONFIG", str(tmp_path / "nope.yaml"))
     with pytest.raises(ConfigError, match="non-existent"):
         find_config()
+
+
+def test_find_config_prefers_hermes_cortex_config_over_gateway_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gateway sessions may run with cwd=$HERMES_HOME where Hermes config.yaml exists."""
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    cwd_config = hermes_home / "config.yaml"
+    cwd_config.write_text("model: {provider: test}\n")
+
+    cortex_dir = hermes_home / "cortex"
+    cortex_dir.mkdir()
+    cortex_cfg = cortex_dir / "config.yaml"
+    cortex_cfg.write_text(
+        f"vault: {{path: {tmp_path}/vault}}\n"
+        f"index: {{chunks_path: {tmp_path}/chunks.jsonl, chroma_path: {tmp_path}/chroma}}\n"
+    )
+
+    monkeypatch.chdir(hermes_home)
+    monkeypatch.delenv("CORTEX_CONFIG", raising=False)
+    monkeypatch.setattr(cortex_config, "_HERMES_HOME", hermes_home)
+
+    assert find_config() == cortex_cfg.resolve()
 
 
 # ---- search-config validation ----------------------------------------------

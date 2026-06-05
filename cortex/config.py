@@ -84,14 +84,27 @@ def _to_bool(value: Any, default: bool = False) -> bool:
 
 
 # ---- Default search order for config.yaml ----
-_CONFIG_SEARCH_PATHS = [
-    Path.cwd() / "config.yaml",
-    _hermes_home() / "cortex" / "config.yaml",
-    # Fallback: wenn _hermes_home() auf ein Profil zeigt (Worker),
-    # nutze die Default-Config (~/.hermes/cortex/config.yaml)
-    Path.home() / ".hermes" / "cortex" / "config.yaml",
-    Path.home() / ".config" / "hermes-cortex" / "config.yaml",
-]
+def _config_search_paths() -> list[Path]:
+    """Return config search paths in priority order.
+
+    Hermes gateway sessions can run with cwd=$HERMES_HOME, where Hermes' own
+    config.yaml lives.  Cortex must prefer the profile-local cortex config over
+    cwd/config.yaml; otherwise the plugin may parse Hermes config as Cortex
+    config and fail with missing vault/index settings.
+    """
+    return [
+        _hermes_home() / "cortex" / "config.yaml",
+        # Fallback: wenn _hermes_home() auf ein Profil zeigt (Worker),
+        # nutze die Default-Config (~/.hermes/cortex/config.yaml)
+        Path.home() / ".hermes" / "cortex" / "config.yaml",
+        Path.home() / ".config" / "hermes-cortex" / "config.yaml",
+        # Standalone/project fallback only. Keep this last so a caller's cwd
+        # cannot shadow the intended Hermes-profile Cortex config.
+        Path.cwd() / "config.yaml",
+    ]
+
+
+_CONFIG_SEARCH_PATHS = _config_search_paths()
 
 
 def _expand(p: Optional[str]) -> Optional[Path]:
@@ -795,7 +808,7 @@ def find_config() -> Optional[Path]:
         if p and p.exists():
             return p
         raise ConfigError(f"CORTEX_CONFIG points to non-existent file: {env}")
-    for candidate in _CONFIG_SEARCH_PATHS:
+    for candidate in _config_search_paths():
         if candidate.exists():
             return candidate
     return None
@@ -815,7 +828,7 @@ def load_config(path: Optional[str | Path] = None) -> Config:
         if cfg_path is None:
             raise ConfigError(
                 "No config.yaml found. Searched: "
-                + ", ".join(str(p) for p in _CONFIG_SEARCH_PATHS)
+                + ", ".join(str(p) for p in _config_search_paths())
                 + ". Set CORTEX_CONFIG or copy config.example.yaml to one of these locations."
             )
 

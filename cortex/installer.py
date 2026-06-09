@@ -13,12 +13,15 @@ Usage (CLI):
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 from typing import Callable, Optional
+
+import yaml
 
 # ---- Default install targets ------------------------------------------------
 
@@ -30,6 +33,32 @@ DEFAULT_CHROMA_PATH = Path.home() / ".hermes" / "cortex" / "chroma"
 DEFAULT_HERMES_MEMORY = Path.home() / ".hermes" / "memories" / "MEMORY.md"
 DEFAULT_HERMES_USER = Path.home() / ".hermes" / "memories" / "USER.md"
 DEFAULT_HERMES_SOUL = Path.home() / ".hermes" / "SOUL.md"
+
+
+def _hermes_home() -> Path:
+    """Return the Hermes home for the current process/profile."""
+    try:
+        from hermes_constants import get_hermes_home  # type: ignore
+
+        return Path(get_hermes_home()).expanduser()
+    except Exception:
+        return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")).expanduser()
+
+
+def _unique_strings(values: object) -> list[str]:
+    """Normalize a YAML scalar/list to a de-duplicated list of strings."""
+    if not isinstance(values, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        item = value.strip()
+        if item and item not in seen:
+            out.append(item)
+            seen.add(item)
+    return out
 
 VAULT_FOLDERS = [
     "00_inbox",
@@ -261,76 +290,67 @@ class Installer:
         soul.write_text(updated, encoding="utf-8")
 
     def _enable_cortex_toolset(self) -> None:
-        """Ensure cortex plugin and toolset are enabled in Hermes config.yaml."""
+        """Ensure cortex plugin and CLI toolset are enabled exactly once."""
         config = self.plan.config_path
         if not config:
             return
 
-        # The Hermes config.yaml is at ~/.hermes/config.yaml, not the cortex config
-        hermes_config = Path.home() / ".hermes" / "config.yaml"
+        hermes_config = _hermes_home() / "config.yaml"
         if not hermes_config.exists():
             self._action(f"SKIP cortex toolset: Hermes config not found: {hermes_config}")
             return
 
-        original = hermes_config.read_text(encoding="utf-8")
-        changes = []
+        raw_config = yaml.safe_load(hermes_config.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw_config, dict):
+            self._action(f"SKIP cortex toolset: Hermes config is not a YAML mapping: {hermes_config}")
+            return
 
-        # Enable plugin
-        if "plugins:" in original:
-            if "- cortex" not in original.split("plugins:")[1].split("\n")[0:10]:
-                # Add cortex to enabled plugins list
-                updated = original.replace(
-                    "  enabled:\n",
-                    "  enabled:\n  - cortex\n",
-                    1
-                )
-                if updated != original:
-                    changes.append("cortex plugin enabled")
-                    original = updated
-            else:
-                changes.append("cortex plugin already enabled")
-        else:
-            updated = original + "\nplugins:\n  enabled:\n    - cortex\n  disabled: []\n"
-            changes.append("cortex plugin section added")
-            original = updated
+        changes: list[str] = []
 
-        # Enable toolset for CLI
-        if "platform_toolsets:" in original:
-            cli_section = original.split("platform_toolsets:")[1]
-            if "cli:" in cli_section:
-                cli_part = cli_section.split("cli:")[1].split("\n")[0]
-                if "cortex" not in cli_part.split("\n")[0]:
-                    # Add cortex after hermes-cli in cli tools
-                    updated = original.replace(
-                        "    - hermes-cli",
-                        "    - hermes-cli\n    - cortex",
-                        1
-                    )
-                    if updated != original:
-                        changes.append("cortex toolset enabled for CLI")
-                        original = updated
-                    else:
-                        changes.append("cortex CLI toolset already present")
-                else:
-                    changes.append("cortex CLI toolset already enabled")
-            else:
-                updated = original.replace(
-                    "platform_toolsets:",
-                    "platform_toolsets:\n  cli:\n    - cortex",
-                    1
-                )
-                if updated != original:
-                    changes.append("cortex CLI toolset added")
-                    original = updated
-        else:
-            updated = original + "\nplatform_toolsets:\n  cli:\n    - cortex\n"
-            changes.append("cortex toolset section added")
-            original = updated
+        plugins = raw_config.setdefault("plugins", {})
+        if not isinstance(plugins, dict):
+            plugins = {}
+            raw_config["plugins"] = plugins
+            changes.append("plugins section repaired")
+
+        original_enabled = plugins.get("enabled")
+        enabled = _unique_strings(original_enabled)
+        if "cortex" not in enabled:
+            enabled.append("cortex")
+            changes.append("cortex plugin enabled")
+        elif isinstance(original_enabled, list) and len(enabled) != len(original_enabled):
+            changes.append("cortex plugin entries deduplicated")
+        plugins["enabled"] = enabled
+
+        original_disabled = plugins.get("disabled")
+        disabled = [item for item in _unique_strings(original_disabled) if item != "cortex"]
+        if isinstance(original_disabled, list) and len(disabled) != len(_unique_strings(original_disabled)):
+            changes.append("cortex removed from disabled plugins")
+        plugins["disabled"] = disabled
+
+        platform_toolsets = raw_config.setdefault("platform_toolsets", {})
+        if not isinstance(platform_toolsets, dict):
+            platform_toolsets = {}
+            raw_config["platform_toolsets"] = platform_toolsets
+            changes.append("platform_toolsets section repaired")
+
+        original_cli_toolsets = platform_toolsets.get("cli")
+        cli_toolsets = _unique_strings(original_cli_toolsets)
+        if "cortex" not in cli_toolsets:
+            cli_toolsets.append("cortex")
+            changes.append("cortex toolset enabled for CLI")
+        elif isinstance(original_cli_toolsets, list) and len(cli_toolsets) != len(original_cli_toolsets):
+            changes.append("cortex CLI toolset entries deduplicated")
+        platform_toolsets["cli"] = cli_toolsets
 
         if changes:
             self._action(f"Update Hermes config: {', '.join(changes)}")
             if not self.plan.dry_run:
-                hermes_config.write_text(original, encoding="utf-8")
+                hermes_config.parent.mkdir(parents=True, exist_ok=True)
+                hermes_config.write_text(
+                    yaml.safe_dump(raw_config, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8",
+                )
         else:
             self._action("Hermes config already has cortex enabled")
 

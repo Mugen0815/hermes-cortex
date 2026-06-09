@@ -45,6 +45,24 @@ class FakePrompt(Prompt):
 
 # ---- Plan execution --------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def isolated_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Prevent installer tests from touching the operator's real Hermes config."""
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        """
+plugins:
+  enabled: []
+  disabled: []
+platform_toolsets:
+  cli: []
+""".lstrip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    return hermes_home
+
 
 @pytest.fixture
 def plan(tmp_path: Path) -> InstallPlan:
@@ -162,6 +180,50 @@ def test_default_install_plan_does_not_imply_markdown_mutation() -> None:
     plan = InstallPlan()
     assert plan.update_hermes_memory is False
     assert plan.update_hermes_soul_memory_rules is False
+
+
+def test_enable_cortex_toolset_is_idempotent_and_deduplicates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    hermes_config = hermes_home / "config.yaml"
+    hermes_config.write_text(
+        """
+plugins:
+  enabled:
+  - other-plugin
+  - cortex
+  - cortex
+  disabled:
+  - cortex
+  - disabled-plugin
+platform_toolsets:
+  cli:
+  - terminal
+  - cortex
+  - cortex
+""".lstrip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    plan = InstallPlan(
+        vault_path=tmp_path / "vault",
+        config_path=tmp_path / "cortex" / "config.yaml",
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        overwrite_policy="force",
+    )
+
+    Installer(plan, prompt=FakePrompt([])).run()
+    Installer(plan, prompt=FakePrompt([])).run()
+
+    raw = yaml.safe_load(hermes_config.read_text(encoding="utf-8"))
+    assert raw["plugins"]["enabled"] == ["other-plugin", "cortex"]
+    assert raw["plugins"]["disabled"] == ["disabled-plugin"]
+    assert raw["platform_toolsets"]["cli"] == ["terminal", "cortex"]
 
 
 def test_run_with_hermes_memory_paths(tmp_path: Path) -> None:

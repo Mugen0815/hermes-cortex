@@ -16,7 +16,7 @@ continues into Markdown content without the second delimiter.
 **Fix:**
 1. Verify with `python3 -c "import re; text=open('path/to/file.md').read(); print(bool(re.search(r'^---[ \t]*\n(.*?)\n---[ \t]*\n', text, re.DOTALL)))"` — should print `True`
 2. Add `---` as the line between frontmatter and body
-3. `cortex index --force && cortex graph build --force` to rebuild
+3. `hermes cortex index --force && hermes cortex graph build --force` to rebuild
 
 ## Unknown enum values
 

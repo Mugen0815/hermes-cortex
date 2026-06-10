@@ -179,5 +179,5 @@ cortex/_seed/templates/
 They are copied into new vaults by:
 
 ```bash
-cortex init --yes
+hermes cortex init --yes
 ```

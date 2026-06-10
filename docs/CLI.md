@@ -6,9 +6,7 @@ This page documents the user-facing Cortex CLI as exposed through Hermes:
 hermes cortex ...
 ```
 
-The standalone `cortex` console script can exist in development installs, but the
-recommended operator command is `hermes cortex ...` because that is the command
-surface registered by the Hermes plugin.
+Operator documentation uses `hermes cortex ...` exclusively because that is the command surface registered by the Hermes plugin.
 
 ## Top-level commands
 

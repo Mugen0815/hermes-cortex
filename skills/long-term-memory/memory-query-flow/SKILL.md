@@ -79,13 +79,15 @@ When writing to the Vault:
    `draft`, `archived`, `deprecated`, `stale`, or `superseded`. Put workflow
    labels like `proposed`, `planned`, `approved`, or `implemented` in separate
    fields.
-5. Run `cortex index`; if it fails, report the exact error and stop.
-6. Run `cortex embed`; if it fails, report the exact error and stop.
-7. Link from `60_maps/Map - Knowledge Index.md` when the note should be discoverable
+5. Run Cortex indexing via the Hermes wrapper: `hermes cortex index`. If it fails, report the exact error and stop.
+6. Run Cortex embedding via the Hermes wrapper: `hermes cortex embed`. If it fails, report the exact error and stop.
+7. When updating Cortex-related docs or skills, search the active skill/source/vault roots for wrapperless Cortex command examples and accidental doubled Hermes prefixes; fix active sources, but do not rewrite historical backups or editor history unless explicitly asked.
+8. Link from `60_maps/Map - Knowledge Index.md` when the note should be discoverable
    from the map.
 
-`cortex index` and `cortex embed` read the vault path from the active Cortex
-config; they do **not** take `--path`.
+`hermes cortex index` and `hermes cortex embed` read the vault path from the active Cortex config; they do **not** take `--path`.
+
+**Operator CLI rule:** document and suggest Cortex commands only through the Hermes wrapper (`hermes cortex ...`). Do not recommend wrapperless Cortex commands, even as compatibility notes; stale wrapperless examples should be corrected when found.
 
 ## Hook/runtime note
 

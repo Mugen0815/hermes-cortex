@@ -56,6 +56,6 @@ grep "vault" ~/.hermes/SOUL.md
 
 - The `session_search` tool queries SQLite FTS5 (`~/.hermes/state.db`), not the JSON session files.
   An empty result means the session isn't in the DB — it may still exist on disk.
-- `cortex init --dry-run` is interactive and hangs without a TTY. Use `--yes` for scripting.
+- `hermes cortex init --dry-run` is interactive and hangs without a TTY. Use `--yes` for scripting.
 - After enabling the toolset, the gateway must be restarted (prompt-caching).
 - Never report an audit finding as "not found in X" without checking both DB and disk.

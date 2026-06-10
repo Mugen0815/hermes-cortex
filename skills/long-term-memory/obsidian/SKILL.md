@@ -45,10 +45,10 @@ If a note has valid YAML inside the frontmatter block but **no closing `---`**, 
 
 Consequences:
 - Graph diagnostics flag the note as **suspicious** ("missing status", "missing domain")
-- The note can't be routed to a target folder by `cortex lifecycle nightly`
+- The note can't be routed to a target folder by `hermes cortex lifecycle nightly`
 - The note is invisible to `fm_status`/`fm_type`-based filters in the graph viewer
 
-**Check:** After writing/editing a note, run `cortex index --force && cortex graph build --force` and call `cortex graph status` — 0 ambiguous + 0 broken means frontmatter is clean.
+**Check:** After writing/editing a note, run `hermes cortex index --force && hermes cortex graph build --force` and call `hermes cortex graph status` — 0 ambiguous + 0 broken means frontmatter is clean.
 
 ### Pipeline fields (for `00_inbox/` review candidates)
 

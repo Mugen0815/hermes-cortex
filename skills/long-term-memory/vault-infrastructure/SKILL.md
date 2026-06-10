@@ -116,13 +116,12 @@ state in shipped seed notes.
 After creating or editing curated Vault notes:
 
 1. Validate frontmatter when the workflow provides a validator.
-2. Run `hermes cortex index` (or `cortex index` in standalone workflows).
-3. Run `hermes cortex embed` (or `cortex embed`).
+2. Run `hermes cortex index`.
+3. Run `hermes cortex embed`.
 4. Re-run graph/lifecycle maintenance when links, aliases, or maps changed.
 5. Verify the updated note is discoverable with `vault_search` or the Cortex CLI.
 
-`cortex index` and `cortex embed` read the vault path from the active Cortex
-config; they do not take a vault path argument.
+`hermes cortex index` and `hermes cortex embed` read the vault path from the active Cortex config; they do not take a vault path argument.
 
 ## Common pitfalls
 

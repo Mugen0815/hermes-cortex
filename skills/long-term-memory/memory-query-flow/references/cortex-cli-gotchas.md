@@ -3,18 +3,18 @@
 > Addendum to vault workflow — common CLI mistakes and pitfalls.
 > Referenced from: `memory-query-flow` skill.
 
-## `cortex index` — no `--path` flag
+## `hermes cortex index` — no `--path` flag
 
-❌ **Wrong:** `cortex index --path ~/vault/10_facts/`
-✅ **Right:** `cortex index`
+❌ **Wrong:** `hermes cortex index --path ~/vault/10_facts/`
+✅ **Right:** `hermes cortex index`
 
 The indexer reads the vault path from `~/.hermes/cortex/config.yaml`.  Use
-`cortex index --config /path/to/config.yaml` to point at a different config,
+`hermes cortex index --config /path/to/config.yaml` to point at a different config,
 but there is no per-call `--path` override.
 
-Same applies to `cortex embed`.
+Same applies to `hermes cortex embed`.
 
-## `cortex index --force`
+## `hermes cortex index --force`
 
 Re-indexes ALL files (ignoring the chunk hash cache).  Use after:
 - Changing the vault path in config.yaml
@@ -63,4 +63,4 @@ ranking and push the actual target note out of the top-10 window.
 **Always use `top_k=20+` when searching for a specific note by name.**
 
 See `references/vault_search_ranking_diagnostic.md` for the full transcript
-and raw `cortex search` output analysis.
+and raw `hermes cortex search` output analysis.

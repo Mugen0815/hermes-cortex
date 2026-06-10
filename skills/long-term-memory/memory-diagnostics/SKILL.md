@@ -12,7 +12,7 @@ Load this when the normal `memory-query-flow` hotpath is not enough:
 - The agent cannot find a known Vault note.
 - Hook-loaded `memory-query-flow` seems missing, stale, duplicated, or too noisy.
 - `session_search` feels slow or returns confusing context.
-- `cortex index` / `cortex embed` / `cortex status` behavior is unclear.
+- `hermes cortex index` / `hermes cortex embed` / `hermes cortex status` behavior is unclear.
 - Source attribution or memory-vs-vault routing appears wrong.
 
 ## 1. Hook bootstrap / config state
@@ -50,7 +50,7 @@ Diagnostic:
 3. Check whether the note is indexed in `~/.hermes/cortex/chunks.jsonl` when needed.
 4. If indexed but not ranking, use `vault_read_note` with the known path.
 5. If `vault_read_note` fails for a path confirmed in `chunks.jsonl`, report the
-   exact error; do not fabricate content. Suggest `cortex index` to resync.
+   exact error; do not fabricate content. Suggest `hermes cortex index` to resync.
 
 Detailed references in the source tree:
 
@@ -80,15 +80,14 @@ values in operator-private notes, not in these public references.
 
 ## 4. Cortex CLI/index/embed gotchas
 
-`cortex index` and `cortex embed` do **not** accept `--path`; they read the Vault
-path from the effective Cortex config.
+`hermes cortex index` and `hermes cortex embed` do **not** accept `--path`; they read the Vault path from the effective Cortex config.
 
 Check before blaming the universe:
 
 ```bash
 hermes cortex config show
-cortex index
-cortex embed
+hermes cortex index
+hermes cortex embed
 ```
 
 If either command exits non-zero, report the exact stderr/stdout and stop. Do not
@@ -113,5 +112,5 @@ If answers cite the wrong source:
 - [ ] `hermes cortex status` path and lifecycle table recorded.
 - [ ] Specific-note searches used `top_k=30` plus filesystem fallback.
 - [ ] Session answers came from `session_search`, not claimed as Vault facts.
-- [ ] Vault writes were followed by successful `cortex index` and `cortex embed`.
+- [ ] Vault writes were followed by successful `hermes cortex index` and `hermes cortex embed`.
 - [ ] Final answer names the real source(s) used.

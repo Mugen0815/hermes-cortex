@@ -98,7 +98,7 @@ Runtime hook context is split semantically:
 
 New semantic blocks take precedence over the legacy `hooks.context_injection`
 block. Legacy configs still parse for compatibility, but they are treated as a
-fallback path, not the primary model. `cortex status` and `cortex config show`
+fallback path, not the primary model. `hermes cortex status` and `hermes cortex config show`
 render this as hook lifecycle rows with explicit `enabled`, `effective`, timing,
 origin, source/payload/target, and skipped reason. A legacy-only config reports
 `legacy_context_injection` as `legacy-active`; a mixed semantic+legacy config
@@ -151,16 +151,16 @@ not treated as medium importance by accident.
 
 Two operator-facing commands are intentionally read-only or diagnostic-only:
 
-- `cortex validate-frontmatter` / `hermes cortex validate-frontmatter`
+- `hermes cortex validate-frontmatter` / `hermes cortex validate-frontmatter`
   - validates YAML frontmatter and vault metadata
   - exits `1` on validation errors, or on warnings only when `--strict` is set
   - `--json` emits a stable report with `schema_version`, counts, and per-file issues
   - `--path` scopes validation to explicit notes or directories inside the vault
-- `cortex search-eval` / `hermes cortex search-eval`
+- `hermes cortex search-eval` / `hermes cortex search-eval`
   - runs fixed real-vault ranking cases
   - `--output` writes the JSON report, `--json` prints the same payload
   - `--baseline` adds compare metadata and rank deltas; update baselines only after
-    `cortex validate-frontmatter` and `--lint-vault-files` pass and index/embed
+    `hermes cortex validate-frontmatter` and `--lint-vault-files` pass and index/embed
     maintenance has run
   - report cases include `final_score`, `rrf_score`, channel ranks, boost fields,
     and baseline comparison fields when a baseline is provided
@@ -170,9 +170,9 @@ Two operator-facing commands are intentionally read-only or diagnostic-only:
 Generated artifacts are disposable:
 
 ```bash
-cortex index --force
-cortex embed --force
-cortex graph build --force
+hermes cortex index --force
+hermes cortex embed --force
+hermes cortex graph build --force
 ```
 
 If search behavior is suspicious, rebuild before theorizing. Machines enjoy

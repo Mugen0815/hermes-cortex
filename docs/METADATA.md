@@ -119,7 +119,12 @@ signals and belong in `status`.
 | `40_runbooks/` | `runbook` |
 | `50_people/` | `person` |
 | `60_maps/` | `map` / index notes |
-| `80_templates/` | templates, not normal content |
+| `80_templates/` | templates/scaffolding, excluded from curated answers by default |
+| `raw/` | immutable source/provenance material, excluded from curated answers by default |
+
+Root files such as `SCHEMA.md`, `index.md`, and `log.md` are llm-wiki-compatible
+orientation/operator files in the same configured Vault root. They are not part of
+the default curated answer corpus when `vault.include_folders` is non-empty.
 
 ## `00_inbox/` review-candidate contract
 
@@ -167,6 +172,21 @@ Numeric values are also accepted:
 - `importance`: `1..5`
 
 Missing confidence or importance is neutral. It does not get a phantom boost.
+
+## Raw source provenance
+
+Raw source files may carry minimal frontmatter for provenance and drift checks:
+
+```yaml
+---
+source_url: https://example.com/article
+ingested: 2026-04-27
+sha256: <hex digest of the body after frontmatter>
+---
+```
+
+`hermes cortex wiki-health` validates this shape when raw files are present. It is
+read-only and reports drift; it does not rewrite sources.
 
 ## Templates
 

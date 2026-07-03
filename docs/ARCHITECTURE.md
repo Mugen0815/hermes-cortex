@@ -82,7 +82,13 @@ Cortex distinguishes between indexed vault knowledge and Hermes runtime memory.
 | `~/.hermes/memories/USER.md` | No | User preferences/profile |
 | `~/.hermes/SOUL.md` | No | Agent persona/rules |
 
-The vault is embedded and searched. Hermes memory files may be included as
+The vault is embedded and searched. `vault.path` in the active Cortex config is
+the only durable runtime source of truth for that Vault. `WIKI_PATH` is accepted
+only by init as a defaulting input when no explicit `--vault` path or existing
+config wins; runtime commands, hooks, indexing, search, and lifecycle do not use
+`WIKI_PATH`, `wiki.path`, or a blind wiki-directory fallback.
+
+Hermes memory files may be included as
 static bootstrap context via `hooks.bootstrap_context.include_static_files`
 (preferred) or the legacy `context_builder.include_hermes_memory` switch. They
 are read as context only; they are not copied into the vault or vector store.
@@ -105,6 +111,34 @@ origin, source/payload/target, and skipped reason. A legacy-only config reports
 reports it as `legacy-ignored`; a config with no legacy block reports it as
 `legacy-absent`. `when` is validated per semantic block so impossible lifecycle
 combinations fail during config load rather than quietly drifting at runtime.
+
+## Vault seed and curated-source boundaries
+
+Fresh init seeds Cortex canonical folders plus llm-wiki-compatible root material
+inside the same configured Vault root:
+
+```text
+SCHEMA.md
+index.md
+log.md
+raw/articles/
+raw/papers/
+raw/transcripts/
+raw/assets/
+raw/README.md
+```
+
+`SCHEMA.md`, `index.md`, and `log.md` are operational/orientation files, not
+curated answer chunks by default under the normal non-empty `include_folders`
+configuration. `raw/` stores immutable source/provenance material. The default
+curated corpus includes `10_facts`, `20_decisions`, `30_projects`, `40_runbooks`,
+`50_people`, and `60_maps`, and excludes `00_inbox`, `80_templates`, and `raw`.
+Operators can diagnose root/raw drift with the read-only `hermes cortex wiki-health`
+command.
+
+`log.md` is append-only operator/lifecycle history. Maintenance/nightly may append
+compact events when the file already exists; missing or non-file `log.md` is a
+health warning/skip condition rather than runtime-created state.
 
 ## Nightly/session promotion
 
@@ -151,12 +185,17 @@ not treated as medium importance by accident.
 
 Two operator-facing commands are intentionally read-only or diagnostic-only:
 
-- `hermes cortex validate-frontmatter` / `hermes cortex validate-frontmatter`
+- `hermes cortex validate-frontmatter`
   - validates YAML frontmatter and vault metadata
   - exits `1` on validation errors, or on warnings only when `--strict` is set
   - `--json` emits a stable report with `schema_version`, counts, and per-file issues
   - `--path` scopes validation to explicit notes or directories inside the vault
-- `hermes cortex search-eval` / `hermes cortex search-eval`
+- `hermes cortex wiki-health`
+  - read-only Cortex/llm-wiki contract diagnostics for configured `vault.path`
+  - reports missing root/raw material, missing canonical folders, curated-source
+    drift, raw frontmatter/hash issues, and missing/non-file `log.md`
+  - never creates or repairs Vault files; `--strict` makes warnings non-zero
+- `hermes cortex search-eval`
   - runs fixed real-vault ranking cases
   - `--output` writes the JSON report, `--json` prints the same payload
   - `--baseline` adds compare metadata and rank deltas; update baselines only after

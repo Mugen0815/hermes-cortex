@@ -76,6 +76,18 @@ Fresh init is idempotent and does not mutate `SOUL.md`, `MEMORY.md`, or
 `USER.md` by default. Legacy memory-file mutation is opt-in only through explicit
 `hermes cortex init` flags.
 
+Cortex has exactly one durable runtime Vault source of truth: `vault.path` in the
+active Cortex config. During `init`, an explicit `--vault` path wins; otherwise an
+existing config wins; only then may `WIKI_PATH` seed the initial `vault.path` for
+new/non-configured installs. Runtime commands, hooks, search, indexing, and
+lifecycle operations use the configured `vault.path`, not `WIKI_PATH`, `wiki.path`,
+or a fallback wiki directory.
+
+Fresh Vaults also include llm-wiki-compatible root/orientation material in that
+same Vault root: `SCHEMA.md`, `index.md`, `log.md`, and `raw/{articles,papers,transcripts,assets}`.
+`raw/`, `00_inbox/`, and `80_templates/` are excluded from curated answer indexing
+by default unless an operator explicitly opts into a diagnostic/source workflow.
+
 Start a new Hermes session after first install. Existing sessions cache their
 tool list, so `/reset` or a full restart is the boring but correct fix.
 
@@ -111,6 +123,9 @@ hermes cortex context "how does memory promotion work?" --budget 4000
 # Validate vault metadata
 hermes cortex validate-frontmatter --strict
 
+# Check the Cortex/llm-wiki Vault contract without mutating files
+hermes cortex wiki-health --strict
+
 # Rebuild all derived artifacts
 hermes cortex lifecycle maintenance
 ```
@@ -134,6 +149,7 @@ Inside Hermes, use the plugin tools through the `cortex` toolset:
 | `hermes cortex search "query" --top-k 20` | Search the vault from the shell |
 | `hermes cortex context "query" --budget 4000` | Build cited Markdown context |
 | `hermes cortex validate-frontmatter --strict` | Validate vault note metadata |
+| `hermes cortex wiki-health [--strict]` | Read-only check for llm-wiki root/raw material and curated-source drift |
 | `hermes cortex status` | Show plugin/code path, config, vault, index, graph, and hook status |
 | `hermes cortex config path` | Print the active Cortex config path |
 | `hermes cortex config show` | Print effective config and hook lifecycle summary |
@@ -178,6 +194,17 @@ Minimal shape:
 ```yaml
 vault:
   path: ~/hermes-workspace/vault
+  include_folders:
+    - 10_facts
+    - 20_decisions
+    - 30_projects
+    - 40_runbooks
+    - 50_people
+    - 60_maps
+  exclude_folders:
+    - 00_inbox
+    - 80_templates
+    - raw
 search:
   top_k: 20
   bm25_weight: 0.5

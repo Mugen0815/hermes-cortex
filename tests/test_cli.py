@@ -6,6 +6,8 @@ sentence-transformers) are mocked when needed.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import MagicMock
@@ -59,6 +61,56 @@ def _setup(tmp_path: Path) -> Path:
             chunks=tmp_path / "chunks.jsonl",
             chroma=tmp_path / "chroma",
         )
+    )
+    return cfg_path
+
+
+def _setup_wiki_health(tmp_path: Path) -> Path:
+    vault = tmp_path / "vault"
+    for rel in [
+        "00_inbox",
+        "10_facts",
+        "20_decisions",
+        "30_projects",
+        "40_runbooks",
+        "50_people",
+        "60_maps",
+        "80_templates",
+        "raw/articles",
+        "raw/papers",
+        "raw/transcripts",
+        "raw/assets",
+    ]:
+        (vault / rel).mkdir(parents=True, exist_ok=True)
+    for rel in ["SCHEMA.md", "index.md", "log.md"]:
+        (vault / rel).write_text(f"# {rel}\n", encoding="utf-8")
+    (vault / "raw" / "README.md").write_text("# Raw\n", encoding="utf-8")
+
+    raw_body = "# Source\n\nOriginal raw body.\n"
+    raw_hash = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
+    (vault / "raw" / "articles" / "source.md").write_text(
+        f"---\nsource_url: https://example.invalid/source\ningested: 2026-07-03\nsha256: {raw_hash}\n---\n\n{raw_body}",
+        encoding="utf-8",
+    )
+
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        dedent(
+            f"""\
+            vault:
+              path: {vault}
+              include_folders: [10_facts, 20_decisions, 30_projects, 40_runbooks, 50_people, 60_maps]
+              exclude_folders: [00_inbox, 80_templates, raw]
+            index:
+              chunks_path: {tmp_path / "chunks.jsonl"}
+              chroma_path: {tmp_path / "chroma"}
+              collection: test-coll
+            embeddings:
+              model: test-model
+              device: cpu
+            """
+        ),
+        encoding="utf-8",
     )
     return cfg_path
 
@@ -201,6 +253,117 @@ def test_cli_index_subcommand(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     out = capsys.readouterr().out
     assert "Indexed" in out
     assert (tmp_path / "chunks.jsonl").exists()
+
+
+def test_wiki_health_success_and_json_are_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "config_path": str(cfg),
+        "vault_path": str(tmp_path / "vault"),
+        "ok": True,
+        "error_count": 0,
+        "warning_count": 0,
+        "issue_count": 0,
+        "issues": [],
+    }
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_wiki_health_reports_missing_contract_items(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    vault = tmp_path / "vault"
+    (vault / "SCHEMA.md").unlink()
+    (vault / "raw" / "papers").rmdir()
+    (vault / "50_people").rmdir()
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    issues = {(i["code"], i["path"]) for i in payload["issues"]}
+    assert ("missing_root_file", "SCHEMA.md") in issues
+    assert ("missing_raw_folder", "raw/papers") in issues
+    assert ("missing_cortex_folder", "50_people") in issues
+
+
+def test_wiki_health_reports_curated_source_config_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    raw["vault"]["include_folders"] = ["10_facts", "raw", "00_inbox", "80_templates"]
+    raw["vault"]["exclude_folders"] = []
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    drift_paths = [i["path"] for i in payload["issues"] if i["code"] == "config_curated_source_drift"]
+    assert drift_paths == ["00_inbox", "80_templates", "raw"]
+
+
+def test_wiki_health_reports_empty_include_config_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    raw["vault"]["include_folders"] = []
+    raw["vault"]["exclude_folders"] = ["00_inbox"]
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    drift_paths = [i["path"] for i in payload["issues"] if i["code"] == "config_curated_source_drift"]
+    assert drift_paths == ["80_templates", "raw"]
+
+
+def test_wiki_health_strict_turns_raw_metadata_warnings_nonzero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw_source = tmp_path / "vault" / "raw" / "articles" / "source.md"
+    raw_source.write_text("---\nsource_url: not-a-url\ningested: nope\n---\n\n# Body\n", encoding="utf-8")
+
+    rc_default = main(["wiki-health", "--config", str(cfg), "--json"])
+    payload_default = json.loads(capsys.readouterr().out)
+    rc_strict = main(["wiki-health", "--config", str(cfg), "--json", "--strict"])
+    payload_strict = json.loads(capsys.readouterr().out)
+
+    assert rc_default == 0
+    assert rc_strict == 1
+    warning_codes = {i["code"] for i in payload_default["issues"]}
+    assert {"raw_source_invalid_source_url", "raw_source_invalid_ingested", "raw_source_missing_sha256"} <= warning_codes
+    assert payload_strict["warning_count"] == payload_default["warning_count"]
+
+
+def test_wiki_health_reports_raw_body_sha256_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw_source = tmp_path / "vault" / "raw" / "articles" / "source.md"
+    raw_source.write_text(raw_source.read_text(encoding="utf-8") + "mutated\n", encoding="utf-8")
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert ("raw_source_sha256_drift", "raw/articles/source.md") in {
+        (i["code"], i["path"]) for i in payload["issues"]
+    }
 
 
 def test_cli_reset_requires_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

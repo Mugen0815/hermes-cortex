@@ -362,6 +362,23 @@ def test_iter_vault_files_respects_include_exclude(tmp_path: Path) -> None:
     assert files == ["A.md", "D.md"]
 
 
+def test_iter_vault_files_default_curated_sources_exclude_raw_inbox_templates_and_root(
+    tmp_path: Path,
+) -> None:
+    cfg = make_config(tmp_path)
+    write_note(cfg.vault.path, "10_facts/A.md", "x")
+    write_note(cfg.vault.path, "20_decisions/B.md", "x")
+    write_note(cfg.vault.path, "00_inbox/C.md", "x")
+    write_note(cfg.vault.path, "80_templates/D.md", "x")
+    write_note(cfg.vault.path, "raw/articles/Source.md", "x")
+    write_note(cfg.vault.path, "SCHEMA.md", "x")
+    write_note(cfg.vault.path, "index.md", "x")
+    write_note(cfg.vault.path, "log.md", "x")
+
+    rels = sorted(p.relative_to(cfg.vault.path).as_posix() for p in iter_vault_files(cfg))
+    assert rels == ["10_facts/A.md", "20_decisions/B.md"]
+
+
 def test_iter_vault_files_skips_obsidian_dir(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     write_note(cfg.vault.path, "10_facts/A.md", "x")

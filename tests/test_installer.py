@@ -132,6 +132,11 @@ def test_seeded_vault_is_frontmatter_index_and_graph_clean(plan: InstallPlan) ->
     assert fm_report.error_count == 0
     assert fm_report.warning_count == 0
 
+    root_report = validate_frontmatter(cfg, paths=["SCHEMA.md", "index.md", "log.md"])
+    assert root_report.checked_count == 3
+    assert root_report.error_count == 0
+    assert root_report.warning_count == 0
+
     index_report = index_vault(cfg, force=True)
     assert index_report.notes_missing_frontmatter == []
     assert index_report.notes_invalid_frontmatter == []
@@ -581,8 +586,8 @@ def test_build_plan_interactively_defaults(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
     cfg = tmp_path / "cfg.yaml"
     answers = [
-        str(vault),       # vault path
         str(cfg),         # config path
+        str(vault),       # vault path
         "",               # templates? default Y
         "",               # seed notes? default Y
         "",               # vault README? default Y
@@ -604,10 +609,41 @@ def test_build_plan_interactively_defaults(tmp_path: Path) -> None:
     assert plan.overwrite_policy == "ask"
 
 
+def test_build_plan_interactively_custom_config_vault_wins_over_wiki_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "configured-vault"
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "custom-config.yaml"
+    cfg.write_text(f"vault:\n  path: {configured}\n", encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    answers = [
+        str(cfg),          # config path first, before vault default resolution
+        "",               # vault path: accept default from existing config
+        "",               # templates? default Y
+        "",               # seed notes? default Y
+        "",               # vault README? default Y
+        "y",              # auto-detect hermes paths
+        "",               # legacy update MEMORY.md vault coordinates? default N
+        "",               # legacy patch SOUL.md Memory Rules? default N
+        "",               # overwrite policy default ask
+        "",               # proceed? default Y
+    ]
+
+    plan = build_plan_interactively(prompt=FakePrompt(answers))
+
+    assert plan.config_path == cfg.resolve()
+    assert plan.vault_path == configured.resolve()
+    assert plan.vault_path_source == "existing config"
+    assert "retained over WIKI_PATH" in plan.vault_path_note
+
+
 def test_build_plan_abort(tmp_path: Path) -> None:
     answers = [
-        str(tmp_path / "vault"),
         str(tmp_path / "cfg.yaml"),
+        str(tmp_path / "vault"),
         "", "", "",
         "y",  # auto-detect
         "",   # legacy update MEMORY.md vault coordinates? default false

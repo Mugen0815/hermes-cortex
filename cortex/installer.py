@@ -632,6 +632,7 @@ def _render_llm_wiki_seed_file(rel: str) -> str:
         return f"""---
 type: note
 status: active
+domain: cortex
 tags: [cortex, llm-wiki, schema]
 confidence: high
 importance: medium
@@ -660,6 +661,7 @@ Treat `raw/` as source material: do not rewrite or silently promote it into cura
         return f"""---
 type: map
 status: active
+domain: cortex
 tags: [cortex, llm-wiki, index]
 confidence: medium
 importance: medium
@@ -691,6 +693,7 @@ Starter map for this Cortex Vault. Add links to durable curated maps, facts, pro
         return f"""---
 type: note
 status: active
+domain: cortex
 tags: [cortex, llm-wiki, log]
 confidence: medium
 importance: low
@@ -786,7 +789,12 @@ def _runtime_insert_index(lines: list[str]) -> int:
 # ---- Interactive plan builder -----------------------------------------------
 
 
-def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
+def build_plan_interactively(
+    prompt: Optional[Prompt] = None,
+    *,
+    config_path: str | Path | None = None,
+    explicit_vault: str | Path | None = None,
+) -> InstallPlan:
     """Walk the user through the plan. Returns an InstallPlan ready to execute."""
     p = prompt or Prompt()
     plan = InstallPlan()
@@ -796,12 +804,22 @@ def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
     p.info("This will set up your vault, templates, and config.")
     p.info("")
 
-    default_vault, source, note = resolve_init_vault_path(DEFAULT_CONFIG_PATH)
-    chosen_vault = p.ask("Vault path", str(default_vault))
-    plan.vault_path = Path(chosen_vault).expanduser().resolve()
-    plan.vault_path_source = source if plan.vault_path == default_vault else "interactive"
-    plan.vault_path_note = note if plan.vault_path == default_vault else ""
-    plan.config_path = Path(p.ask("Config file path", str(DEFAULT_CONFIG_PATH))).expanduser().resolve()
+    if config_path is None:
+        chosen_config = p.ask("Config file path", str(DEFAULT_CONFIG_PATH))
+        plan.config_path = Path(chosen_config).expanduser().resolve()
+    else:
+        plan.config_path = Path(config_path).expanduser().resolve()
+
+    default_vault, source, note = resolve_init_vault_path(plan.config_path, explicit_vault)
+    if explicit_vault is None:
+        chosen_vault = p.ask("Vault path", str(default_vault))
+        plan.vault_path = Path(chosen_vault).expanduser().resolve()
+        plan.vault_path_source = source if plan.vault_path == default_vault else "interactive"
+        plan.vault_path_note = note if plan.vault_path == default_vault else ""
+    else:
+        plan.vault_path = default_vault
+        plan.vault_path_source = source
+        plan.vault_path_note = note
 
     plan.install_templates = p.confirm("Install note templates (80_templates/)?", default=True)
     plan.install_seed_notes = p.confirm("Install seed notes (Map of Content + basic facts)?", default=True)

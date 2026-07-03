@@ -75,13 +75,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
             vault_path_note=vault_note,
         )
     else:
-        plan = build_plan_interactively()
-        if args.vault:
-            plan.vault_path = Path(args.vault).expanduser().resolve()
-            plan.vault_path_source = "explicit"
-            plan.vault_path_note = ""
-        if args.config:
-            plan.config_path = Path(args.config).expanduser().resolve()
+        plan = build_plan_interactively(config_path=args.config, explicit_vault=args.vault)
         plan.dry_run = args.dry_run
 
     Installer(plan).run()

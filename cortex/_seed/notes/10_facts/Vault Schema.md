@@ -35,7 +35,19 @@ Every note carries YAML frontmatter combining classic Obsidian fields
 | `20_decisions/` | `decision` |
 | `30_projects/` | `project` |
 | `40_runbooks/` | `runbook` |
-| `60_maps/` | `map` (MOC, not bulk-indexed as content) |
+| `50_people/` | `person` |
+| `60_maps/` | `map` |
+| `00_inbox/` | draft/review-only candidates, excluded from curated answers by default |
+| `80_templates/` | templates/scaffolding, excluded from curated answers by default |
+| `raw/` | immutable source/provenance material, excluded from curated answers by default |
+
+Root files (`SCHEMA.md`, `index.md`, `log.md`) are llm-wiki-compatible
+orientation/operator files in the configured Vault root. They are operational by
+default, not curated answer chunks.
+
+## Raw provenance
+Raw files may include frontmatter with `source_url`, `ingested`, and a body-only
+`sha256` so `hermes cortex wiki-health` can report drift without mutating sources.
 
 ## Templates
 Located in `80_templates/` — copy and adjust:

@@ -15,7 +15,25 @@ Curated, durable knowledge — organized for retrieval:
 50_people/      people, contacts, relationships
 60_maps/        index/overview notes (MOC = Map of Content)
 80_templates/   note templates (not indexed)
+raw/           immutable source/provenance material (not indexed as curated answers)
 ```
+
+Fresh Cortex Vaults also include llm-wiki-compatible root files in this same
+configured Vault root:
+
+```text
+SCHEMA.md      schema/conventions and provenance rules
+index.md       operator-facing Vault catalog/map
+log.md         append-only operator/lifecycle history
+raw/articles/  web/article source captures
+raw/papers/    papers and PDFs
+raw/transcripts/ transcripts and meeting/source notes
+raw/assets/    images and referenced binary assets
+```
+
+`vault.path` in the active Cortex config is the only durable runtime location for
+this Vault. `WIKI_PATH` may seed `vault.path` during init for otherwise
+unconfigured installs, but runtime commands and hooks use the configured path.
 
 ## What does NOT live here
 
@@ -44,3 +62,6 @@ Every note uses YAML frontmatter — see `80_templates/` in the initialized vaul
 - Use `[[Wikilinks]]` generously — they feed the retrieval graph.
 - Prefer short, declarative statements over prose.
 - Keep `last_verified` honest. If you didn't check, don't bump it.
+- Keep raw source files immutable. Corrections and synthesis belong in curated notes.
+- Use `hermes cortex wiki-health` for read-only checks of root files, raw folders,
+  curated-source exclusions, and raw source drift.

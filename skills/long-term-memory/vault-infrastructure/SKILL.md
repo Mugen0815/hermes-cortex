@@ -16,8 +16,8 @@ this hotpath.
 
 ## Layers
 
-- **Vault** — curated long-term memory: stable facts, decisions, project context,
-  runbooks, maps, and people notes.
+- **Vault** — the single configured Cortex root from `vault.path`; it contains
+  curated long-term memory plus llm-wiki-compatible root/raw material.
 - **Sessions** — raw conversation history and temporary evidence. Do not copy raw
   transcripts into the Vault.
 - **Runtime state** — Cortex config, chunks, embeddings, and generated graph data.
@@ -33,8 +33,16 @@ this hotpath.
 40_runbooks/    Repeatable procedures and troubleshooting
 50_people/      People notes
 60_maps/        Index and navigation notes
-80_templates/   Note templates
+80_templates/   Note templates / scaffolding (excluded from curated answers)
+raw/           Immutable source/provenance material (excluded from curated answers)
+SCHEMA.md      Vault conventions and provenance rules
+index.md       Operator-facing catalog/map
+log.md         Append-only operator/lifecycle history
 ```
+
+Do not introduce a second durable wiki path. `WIKI_PATH` is only an init/default
+input for otherwise unconfigured installs; runtime Cortex work uses configured
+`vault.path`.
 
 ## Note types and frontmatter
 
@@ -121,11 +129,17 @@ After creating or editing curated Vault notes:
 4. Re-run graph/lifecycle maintenance when links, aliases, or maps changed.
 5. Verify the updated note is discoverable with `vault_search` or the Cortex CLI.
 
-`hermes cortex index` and `hermes cortex embed` read the vault path from the active Cortex config; they do not take a vault path argument.
+`hermes cortex index` and `hermes cortex embed` read the vault path from the active Cortex config; they do not take a vault path argument. Prefer `hermes cortex lifecycle maintenance` when available; otherwise run index, embed, and graph build as applicable.
+
+Run `hermes cortex wiki-health` for a read-only check of missing root files, raw
+folders, curated-source exclusions (`raw`, `00_inbox`, `80_templates`), and raw
+source frontmatter/hash drift.
 
 ## Common pitfalls
 
 - Do not confuse raw sessions with curated knowledge.
+- Do not index `raw/`, `00_inbox/`, or `80_templates` as default curated answer sources.
+- Do not create or document `wiki.path`, blind wiki-directory fallback, or a second durable Vault.
 - Do not create duplicate notes when an existing note can be updated.
 - Do not invent frontmatter status values; use the canonical metadata enums.
 - Do not store generated index, embedding, graph, cache, or runtime config files
@@ -138,5 +152,6 @@ After creating or editing curated Vault notes:
 - [ ] Frontmatter is present and uses canonical enum values.
 - [ ] Existing notes were checked before creating a new one.
 - [ ] Public/shared seed content contains no private operator details.
+- [ ] `wiki-health` passes or any root/raw/source-exclusion warnings are intentional and reported.
 - [ ] Index and embeddings were refreshed after Vault writes.
 - [ ] Important notes are linked from a relevant map when discoverability matters.

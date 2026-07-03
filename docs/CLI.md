@@ -17,6 +17,7 @@ hermes cortex embed
 hermes cortex search
 hermes cortex search-eval
 hermes cortex validate-frontmatter
+hermes cortex wiki-health
 hermes cortex context
 hermes cortex graph
 hermes cortex config
@@ -57,6 +58,18 @@ Options:
 | `--legacy-update-soul-memory-rules` | Opt in to patching `SOUL.md` with Cortex memory rules |
 
 By default, init does not mutate `SOUL.md`, `MEMORY.md`, or `USER.md`.
+
+`vault.path` in the active Cortex config is the only durable runtime Vault source
+of truth. Init path selection is deliberately one-way:
+
+1. explicit `--vault PATH` or interactive operator input;
+2. existing config `vault.path` when no explicit path was supplied;
+3. `WIKI_PATH` only as an init/default input for new, otherwise unconfigured installs;
+4. the built-in default `~/hermes-workspace/vault`.
+
+After init, commands such as `index`, `embed`, `search`, hooks, and lifecycle use
+configured `vault.path`. They do not fall back to `WIKI_PATH`, `wiki.path`, or a
+second wiki directory.
 
 ## Index
 
@@ -176,6 +189,29 @@ Options:
 
 Default exit behavior: errors return exit code `1`; warnings only return `0`
 unless `--strict` is set.
+
+## Wiki health
+
+Check the configured Vault against the Cortex/llm-wiki single-Vault contract
+without modifying files.
+
+```bash
+hermes cortex wiki-health
+hermes cortex wiki-health --strict
+hermes cortex wiki-health --json
+```
+
+The report includes the active config path, `vault.path`, missing root files
+(`SCHEMA.md`, `index.md`, `log.md`), missing raw folders
+(`raw/articles`, `raw/papers`, `raw/transcripts`, `raw/assets`), missing Cortex
+canonical folders, curated-source drift that would index `raw`, `00_inbox`, or
+`80_templates`, and raw-source frontmatter/hash drift diagnostics when present.
+Missing or non-file `log.md` is reported; runtime lifecycle commands do not create
+it as application state. `log.md` is append-only operator/lifecycle history when
+it exists.
+
+`--strict` returns non-zero for warnings. `--json` emits deterministic JSON for
+scripts and tests.
 
 ## Context
 

@@ -50,6 +50,7 @@ from cortex.installer import (
     InstallPlan,
     Installer,
     build_plan_interactively,
+    resolve_init_vault_path,
 )
 
 
@@ -58,9 +59,11 @@ from cortex.installer import (
 
 def _cmd_init(args: argparse.Namespace) -> int:
     if args.yes:
+        config_path = Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH
+        vault_path, vault_source, vault_note = resolve_init_vault_path(config_path, args.vault)
         plan = InstallPlan(
-            vault_path=Path(args.vault).expanduser().resolve() if args.vault else DEFAULT_VAULT_PATH,
-            config_path=Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH,
+            vault_path=vault_path,
+            config_path=config_path,
             hermes_memory_path=DEFAULT_HERMES_MEMORY if DEFAULT_HERMES_MEMORY.exists() else None,
             hermes_user_path=DEFAULT_HERMES_USER if DEFAULT_HERMES_USER.exists() else None,
             hermes_soul_path=DEFAULT_HERMES_SOUL if DEFAULT_HERMES_SOUL.exists() else None,
@@ -68,11 +71,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
             update_hermes_soul_memory_rules=args.legacy_update_soul_memory_rules,
             overwrite_policy="skip",
             dry_run=args.dry_run,
+            vault_path_source=vault_source,
+            vault_path_note=vault_note,
         )
     else:
         plan = build_plan_interactively()
         if args.vault:
             plan.vault_path = Path(args.vault).expanduser().resolve()
+            plan.vault_path_source = "explicit"
+            plan.vault_path_note = ""
         if args.config:
             plan.config_path = Path(args.config).expanduser().resolve()
         plan.dry_run = args.dry_run

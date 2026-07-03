@@ -11,6 +11,7 @@ from textwrap import dedent
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from cortex.cli import main
 
@@ -61,6 +62,76 @@ def _setup(tmp_path: Path) -> Path:
     )
     return cfg_path
 
+
+def _isolate_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        "plugins:\n  enabled: []\n  disabled: []\nplatform_toolsets:\n  cli: []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    return hermes_home
+
+
+def test_cli_init_yes_uses_wiki_path_only_for_fresh_init(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+
+    assert rc == 0
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert raw["vault"]["path"] == str(wiki.resolve())
+    assert (wiki / "SCHEMA.md").exists()
+    assert (wiki / "raw" / "articles").is_dir()
+    out = capsys.readouterr().out
+    assert f"Vault path default: {wiki.resolve()} (source: WIKI_PATH)" in out
+
+
+def test_cli_init_yes_existing_config_wins_over_wiki_path_and_runtime_uses_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    configured.mkdir()
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    before = cfg.read_text(encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+    assert rc == 0
+    assert cfg.read_text(encoding="utf-8") == before
+    assert (configured / "SCHEMA.md").exists()
+    assert not wiki.exists()
+    out = capsys.readouterr().out
+    assert f"Vault path default: {configured.resolve()} (source: existing config)" in out
+    assert "retained over WIKI_PATH" in out
+    assert "planned vault.path" in out
+
+    rc = main(["status", "--config", str(cfg)])
+    assert rc == 0
+    status_out = capsys.readouterr().out
+    assert f"Vault:          {configured.resolve()} (ok)" in status_out
+    assert str(wiki.resolve()) not in status_out
 
 def test_config_show_legacy_context_label_depends_on_semantic_presence(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

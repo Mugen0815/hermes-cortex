@@ -18,9 +18,12 @@ from cortex.indexer import index_vault
 from cortex.installer import (
     InstallPlan,
     Installer,
+    LLM_WIKI_ROOT_FILES,
     Prompt,
+    RAW_FOLDERS,
     VAULT_FOLDERS,
     build_plan_interactively,
+    resolve_init_vault_path,
 )
 
 
@@ -82,7 +85,29 @@ def test_run_creates_vault_skeleton(plan: InstallPlan) -> None:
     Installer(plan, prompt=FakePrompt([])).run()
     for folder in VAULT_FOLDERS:
         assert (plan.vault_path / folder).is_dir()
+    for folder in RAW_FOLDERS:
+        assert (plan.vault_path / folder).is_dir()
+    for rel in LLM_WIKI_ROOT_FILES:
+        assert (plan.vault_path / rel).exists()
 
+
+def test_llm_wiki_root_files_are_preserved_by_skip_policy(plan: InstallPlan) -> None:
+    Installer(plan, prompt=FakePrompt([])).run()
+    root_file = plan.vault_path / "SCHEMA.md"
+    raw_readme = plan.vault_path / "raw" / "README.md"
+    raw_source = plan.vault_path / "raw" / "articles" / "source.md"
+    root_file.write_text("USER SCHEMA", encoding="utf-8")
+    raw_readme.write_text("USER RAW README", encoding="utf-8")
+    raw_source.write_text("RAW SOURCE", encoding="utf-8")
+
+    plan.overwrite_policy = "skip"
+    plan.actions.clear()
+    Installer(plan, prompt=FakePrompt([])).run()
+
+    assert root_file.read_text(encoding="utf-8") == "USER SCHEMA"
+    assert raw_readme.read_text(encoding="utf-8") == "USER RAW README"
+    assert raw_source.read_text(encoding="utf-8") == "RAW SOURCE"
+    assert any("SKIP existing" in action and "SCHEMA.md" in action for action in plan.actions)
 
 def test_run_installs_templates(plan: InstallPlan) -> None:
     Installer(plan, prompt=FakePrompt([])).run()
@@ -144,6 +169,15 @@ def test_run_writes_valid_config(plan: InstallPlan) -> None:
     Installer(plan, prompt=FakePrompt([])).run()
     raw = yaml.safe_load(plan.config_path.read_text())
     assert raw["vault"]["path"] == str(plan.vault_path)
+    assert raw["vault"]["include_folders"] == [
+        "10_facts",
+        "20_decisions",
+        "30_projects",
+        "40_runbooks",
+        "50_people",
+        "60_maps",
+    ]
+    assert raw["vault"]["exclude_folders"] == ["00_inbox", "80_templates", "raw"]
     assert raw["index"]["chroma_path"] == str(plan.chroma_path)
     assert raw["context_builder"]["include_hermes_memory"] is False
     assert raw["context_builder"]["include_static_files"] == []
@@ -496,6 +530,51 @@ def test_install_flags_disable_optional_steps(tmp_path: Path) -> None:
 
 
 # ---- Interactive plan builder ----------------------------------------------
+
+
+def test_resolve_init_vault_path_uses_wiki_path_only_without_existing_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wiki = tmp_path / "wiki"
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    vault, source, note = resolve_init_vault_path(tmp_path / "missing-config.yaml")
+
+    assert vault == wiki.resolve()
+    assert source == "WIKI_PATH"
+    assert note == ""
+
+
+def test_resolve_init_vault_path_preserves_existing_config_over_wiki_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "configured-vault"
+    config = tmp_path / "config.yaml"
+    config.write_text(f"vault:\n  path: {configured}\n", encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    vault, source, note = resolve_init_vault_path(config)
+
+    assert vault == configured.resolve()
+    assert source == "existing config"
+    assert "retained over WIKI_PATH" in note
+
+
+def test_resolve_init_vault_path_explicit_wins_over_config_and_wiki_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(f"vault:\n  path: {tmp_path / 'configured'}\n", encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    vault, source, note = resolve_init_vault_path(config, tmp_path / "explicit")
+
+    assert vault == (tmp_path / "explicit").resolve()
+    assert source == "explicit"
+    assert note == ""
 
 
 def test_build_plan_interactively_defaults(tmp_path: Path) -> None:

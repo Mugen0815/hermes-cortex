@@ -18,6 +18,7 @@ vault:
   exclude_folders:
     - 00_inbox
     - 80_templates
+    - raw
 
 # Hermes memory file coordinates are read-only context inputs. New hook configs
 # should prefer hooks.bootstrap_context.include_static_files over the legacy

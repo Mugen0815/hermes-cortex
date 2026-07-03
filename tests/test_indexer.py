@@ -40,7 +40,7 @@ def make_config(tmp_path: Path) -> Config:
         vault=VaultConfig(
             path=vault,
             include_folders=["10_facts", "20_decisions", "30_projects", "60_maps"],
-            exclude_folders=["00_inbox", "80_templates"],
+            exclude_folders=["00_inbox", "80_templates", "raw"],
         ),
         hermes_memory=HermesMemoryConfig(),
         index=IndexConfig(
@@ -352,6 +352,10 @@ def test_iter_vault_files_respects_include_exclude(tmp_path: Path) -> None:
     write_note(cfg.vault.path, "00_inbox/B.md", "x")
     write_note(cfg.vault.path, "80_templates/C.md", "x")
     write_note(cfg.vault.path, "60_maps/D.md", "x")
+    write_note(cfg.vault.path, "raw/articles/Source.md", "x")
+    write_note(cfg.vault.path, "SCHEMA.md", "x")
+    write_note(cfg.vault.path, "index.md", "x")
+    write_note(cfg.vault.path, "log.md", "x")
     write_note(cfg.vault.path, "README.md", "x")
 
     files = sorted(p.name for p in iter_vault_files(cfg))

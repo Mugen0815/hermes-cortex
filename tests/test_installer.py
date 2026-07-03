@@ -21,6 +21,7 @@ from cortex.installer import (
     Prompt,
     VAULT_FOLDERS,
     build_plan_interactively,
+    resolve_vault_path,
 )
 
 
@@ -144,6 +145,7 @@ def test_run_writes_valid_config(plan: InstallPlan) -> None:
     Installer(plan, prompt=FakePrompt([])).run()
     raw = yaml.safe_load(plan.config_path.read_text())
     assert raw["vault"]["path"] == str(plan.vault_path)
+    assert raw["vault"]["path_origin"] == "unknown"
     assert raw["index"]["chroma_path"] == str(plan.chroma_path)
     assert raw["context_builder"]["include_hermes_memory"] is False
     assert raw["context_builder"]["include_static_files"] == []
@@ -174,6 +176,118 @@ def test_run_writes_valid_config(plan: InstallPlan) -> None:
     ]
     assert "PersonalName" not in plan.config_path.read_text()
     assert "hermes_memory" in raw  # may be empty dict
+
+
+def test_resolve_vault_path_precedence(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    existing_vault = tmp_path / "existing-vault"
+    cfg.write_text(f"vault:\n  path: {existing_vault}\n", encoding="utf-8")
+
+    explicit = resolve_vault_path(
+        tmp_path / "explicit-vault",
+        config_path=cfg,
+        env={"WIKI_PATH": str(tmp_path / "wiki-vault")},
+        default_path=tmp_path / "default-vault",
+    )
+    assert explicit.path == (tmp_path / "explicit-vault").resolve()
+    assert explicit.origin == "explicit"
+
+    env = resolve_vault_path(
+        config_path=cfg,
+        env={"WIKI_PATH": str(tmp_path / "wiki-vault")},
+        default_path=tmp_path / "default-vault",
+    )
+    assert env.path == (tmp_path / "wiki-vault").resolve()
+    assert env.origin == "env:WIKI_PATH"
+
+    existing = resolve_vault_path(
+        config_path=cfg,
+        env={"WIKI_PATH": "   "},
+        default_path=tmp_path / "default-vault",
+    )
+    assert existing.path == existing_vault.resolve()
+    assert existing.origin == "existing_config"
+
+    default = resolve_vault_path(
+        config_path=tmp_path / "missing-config.yaml",
+        env={"WIKI_PATH": ""},
+        default_path=tmp_path / "default-vault",
+    )
+    assert default.path == (tmp_path / "default-vault").resolve()
+    assert default.origin == "default"
+
+
+def test_cli_init_yes_uses_wiki_path_and_writes_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cortex.cli import main
+
+    wiki_vault = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    monkeypatch.setenv("WIKI_PATH", str(wiki_vault))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+    assert rc == 0
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert raw["vault"]["path"] == str(wiki_vault.resolve())
+    assert raw["vault"]["path_origin"] == "env:WIKI_PATH"
+    assert (wiki_vault / "10_facts").is_dir()
+
+    capsys.readouterr()
+    rc = main(["status", "--config", str(cfg)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Vault origin:   env:WIKI_PATH" in out
+
+
+def test_cli_init_yes_preserves_existing_config_vault_when_wiki_path_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cortex.cli import main
+
+    cfg = tmp_path / "cortex" / "config.yaml"
+    existing_vault = tmp_path / "existing-vault"
+    cfg.parent.mkdir(parents=True)
+    original_config = f"vault:\n  path: {existing_vault}\n"
+    cfg.write_text(original_config, encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", "  ")
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+    assert rc == 0
+    assert cfg.read_text(encoding="utf-8") == original_config
+    assert (existing_vault / "10_facts").is_dir()
+
+
+def test_cli_init_yes_env_overrides_existing_config_vault_but_preserves_other_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cortex.cli import main
+
+    cfg = tmp_path / "cortex" / "config.yaml"
+    existing_vault = tmp_path / "existing-vault"
+    wiki_vault = tmp_path / "wiki-vault"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        f"""vault:
+  path: {existing_vault}
+index:
+  collection: keep-me
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WIKI_PATH", str(wiki_vault))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+    assert rc == 0
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert raw["vault"]["path"] == str(wiki_vault.resolve())
+    assert raw["vault"]["path_origin"] == "env:WIKI_PATH"
+    assert raw["index"]["collection"] == "keep-me"
+    assert (wiki_vault / "10_facts").is_dir()
 
 
 def test_default_install_plan_does_not_imply_markdown_mutation() -> None:

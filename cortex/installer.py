@@ -60,6 +60,79 @@ def _unique_strings(values: object) -> list[str]:
             seen.add(item)
     return out
 
+
+@dataclass(frozen=True)
+class ResolvedVaultPath:
+    """Vault path chosen for config generation plus its init-time origin."""
+
+    path: Path
+    origin: str
+
+
+def _canonical_path(path: str | Path) -> Path:
+    """Expand user/env vars and resolve to an absolute runtime path."""
+    return Path(os.path.expandvars(os.path.expanduser(str(path)))).resolve()
+
+
+def _non_empty_path(value: object) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    return raw or None
+
+
+def _existing_config_vault_path(config_path: Path) -> Path | None:
+    """Read vault.path from an existing Cortex config without requiring full validity."""
+    if not config_path.exists():
+        return None
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    vault = raw.get("vault") or {}
+    if not isinstance(vault, dict):
+        return None
+    path = _non_empty_path(vault.get("path"))
+    return _canonical_path(path) if path else None
+
+
+def resolve_vault_path(
+    explicit_vault_path: str | Path | None = None,
+    *,
+    config_path: str | Path | None = None,
+    env: dict[str, str] | None = None,
+    default_path: str | Path = DEFAULT_VAULT_PATH,
+) -> ResolvedVaultPath:
+    """Resolve the init/config-generation vault path by documented precedence.
+
+    Precedence when no explicit override is supplied:
+    1. explicit CLI/config vault path
+    2. non-empty WIKI_PATH
+    3. existing Cortex config vault.path
+    4. ~/hermes-workspace/vault
+
+    Runtime loading still uses the generated config's vault.path; WIKI_PATH is
+    only consulted while generating an install plan.
+    """
+    explicit = _non_empty_path(explicit_vault_path)
+    if explicit:
+        return ResolvedVaultPath(_canonical_path(explicit), "explicit")
+
+    lookup_env = env if env is not None else os.environ
+    wiki_path = _non_empty_path(lookup_env.get("WIKI_PATH"))
+    if wiki_path:
+        return ResolvedVaultPath(_canonical_path(wiki_path), "env:WIKI_PATH")
+
+    cfg = _canonical_path(config_path or DEFAULT_CONFIG_PATH)
+    existing = _existing_config_vault_path(cfg)
+    if existing is not None:
+        return ResolvedVaultPath(existing, "existing_config")
+
+    return ResolvedVaultPath(_canonical_path(default_path), "default")
+
+
 VAULT_FOLDERS = [
     "00_inbox",
     "10_facts",
@@ -80,6 +153,7 @@ class InstallPlan:
     """Resolved install configuration. Pure data — no side effects."""
 
     vault_path: Path = DEFAULT_VAULT_PATH
+    vault_path_origin: str | None = None
     config_path: Path = DEFAULT_CONFIG_PATH
     chunks_path: Path = DEFAULT_CHUNKS_PATH
     chroma_path: Path = DEFAULT_CHROMA_PATH
@@ -212,8 +286,40 @@ class Installer:
 
     def _write_config(self) -> None:
         cfg = self.plan.config_path
+        if cfg.exists() and self.plan.vault_path_origin in {"explicit", "env:WIKI_PATH"}:
+            self._update_existing_config_vault_path(cfg)
+            return
         content = self._render_config()
         self._copy_text(content, cfg)
+
+    def _update_existing_config_vault_path(self, cfg: Path) -> None:
+        """Patch vault.path in an existing config while preserving other settings."""
+        try:
+            raw = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            self._copy_text(self._render_config(), cfg)
+            return
+        if not isinstance(raw, dict):
+            self._copy_text(self._render_config(), cfg)
+            return
+        vault = raw.setdefault("vault", {})
+        if not isinstance(vault, dict):
+            vault = {}
+            raw["vault"] = vault
+        old_path = vault.get("path")
+        old_origin = vault.get("path_origin")
+        new_path = str(self.plan.vault_path)
+        new_origin = self.plan.vault_path_origin or "unknown"
+        vault["path"] = new_path
+        vault["path_origin"] = new_origin
+        if old_path == new_path and old_origin == new_origin:
+            self._action(f"Config vault.path already points at {new_path} ({new_origin})")
+            return
+        self._action(f"Update config vault.path: {cfg} ({new_origin})")
+        if self.plan.dry_run:
+            return
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
     def _update_hermes_memory_coordinates(self) -> None:
         mem = self.plan.hermes_memory_path
@@ -362,6 +468,8 @@ class Installer:
         if not self.plan.dry_run:
             self.prompt.info("")
             self.prompt.info(f"Vault:  {self.plan.vault_path}")
+            if self.plan.vault_path_origin:
+                self.prompt.info(f"Origin: {self.plan.vault_path_origin}")
             self.prompt.info(f"Config: {self.plan.config_path}")
             self.prompt.info("")
             self.prompt.info("Next: run `cortex index`, `cortex embed`, then `cortex graph build`.")
@@ -436,6 +544,7 @@ class Installer:
 
 vault:
   path: {p.vault_path}
+  path_origin: {p.vault_path_origin or 'unknown'}
   include_folders: [10_facts, 20_decisions, 30_projects, 40_runbooks, 50_people, 60_maps]
   exclude_folders: [00_inbox, 80_templates]
 
@@ -604,18 +713,25 @@ def _runtime_insert_index(lines: list[str]) -> int:
 # ---- Interactive plan builder -----------------------------------------------
 
 
-def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
+def build_plan_interactively(
+    prompt: Optional[Prompt] = None,
+    config_path: str | Path | None = None,
+) -> InstallPlan:
     """Walk the user through the plan. Returns an InstallPlan ready to execute."""
     p = prompt or Prompt()
     plan = InstallPlan()
+    default_config_path = _canonical_path(config_path or DEFAULT_CONFIG_PATH)
+    default_vault = resolve_vault_path(config_path=default_config_path)
 
     p.info("")
     p.info("hermes-cortex installer")
     p.info("This will set up your vault, templates, and config.")
     p.info("")
 
-    plan.vault_path = Path(p.ask("Vault path", str(DEFAULT_VAULT_PATH))).expanduser().resolve()
-    plan.config_path = Path(p.ask("Config file path", str(DEFAULT_CONFIG_PATH))).expanduser().resolve()
+    raw_vault_path = p.ask("Vault path", str(default_vault.path))
+    plan.vault_path = _canonical_path(raw_vault_path)
+    plan.vault_path_origin = default_vault.origin if str(plan.vault_path) == str(default_vault.path) else "explicit"
+    plan.config_path = _canonical_path(p.ask("Config file path", str(default_config_path)))
 
     plan.install_templates = p.confirm("Install note templates (80_templates/)?", default=True)
     plan.install_seed_notes = p.confirm("Install seed notes (Map of Content + basic facts)?", default=True)

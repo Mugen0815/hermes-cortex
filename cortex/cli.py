@@ -46,10 +46,10 @@ from cortex.installer import (
     DEFAULT_HERMES_MEMORY,
     DEFAULT_HERMES_SOUL,
     DEFAULT_HERMES_USER,
-    DEFAULT_VAULT_PATH,
     InstallPlan,
     Installer,
     build_plan_interactively,
+    resolve_vault_path,
 )
 
 
@@ -57,10 +57,13 @@ from cortex.installer import (
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH
     if args.yes:
+        resolved_vault = resolve_vault_path(args.vault, config_path=config_path)
         plan = InstallPlan(
-            vault_path=Path(args.vault).expanduser().resolve() if args.vault else DEFAULT_VAULT_PATH,
-            config_path=Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH,
+            vault_path=resolved_vault.path,
+            vault_path_origin=resolved_vault.origin,
+            config_path=config_path,
             hermes_memory_path=DEFAULT_HERMES_MEMORY if DEFAULT_HERMES_MEMORY.exists() else None,
             hermes_user_path=DEFAULT_HERMES_USER if DEFAULT_HERMES_USER.exists() else None,
             hermes_soul_path=DEFAULT_HERMES_SOUL if DEFAULT_HERMES_SOUL.exists() else None,
@@ -70,11 +73,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
         )
     else:
-        plan = build_plan_interactively()
+        plan = build_plan_interactively(config_path=config_path)
         if args.vault:
-            plan.vault_path = Path(args.vault).expanduser().resolve()
+            resolved_vault = resolve_vault_path(args.vault, config_path=plan.config_path)
+            plan.vault_path = resolved_vault.path
+            plan.vault_path_origin = resolved_vault.origin
         if args.config:
-            plan.config_path = Path(args.config).expanduser().resolve()
+            plan.config_path = config_path
         plan.dry_run = args.dry_run
 
     Installer(plan).run()
@@ -644,6 +649,7 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
     cfg = resolve_config(getattr(args, "config", None))
     print(f"Config:          {cfg.source_path}")
     print(f"Vault:           {cfg.vault.path}")
+    print(f"Vault origin:    {cfg.vault.path_origin or 'unknown'}")
     print(f"Chunks:          {cfg.index.chunks_path}")
     print(f"Chroma:          {cfg.index.chroma_path}")
     print(f"Collection:      {cfg.index.collection}")
@@ -686,6 +692,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"  Plugin/code:    {plugin_root}")
     print(f"  Config:         {cfg.source_path}")
     print(f"  Vault:          {cfg.vault.path} ({'ok' if cfg.vault.path.exists() else 'missing'})")
+    print(f"  Vault origin:   {cfg.vault.path_origin or 'unknown'}")
     print(f"  Chunks:         {cfg.index.chunks_path} ({'ok' if cfg.index.chunks_path.exists() else 'missing'})")
     print(f"  Chroma:         {cfg.index.chroma_path} ({'ok' if cfg.index.chroma_path.exists() else 'missing'})")
     print(f"  Embeddings:     {cfg.embeddings.model} ({cfg.embeddings.device})")

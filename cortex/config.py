@@ -119,6 +119,7 @@ class VaultConfig:
     path: Path
     include_folders: list[str] = field(default_factory=list)
     exclude_folders: list[str] = field(default_factory=list)
+    path_origin: str | None = None
 
 
 @dataclass
@@ -841,6 +842,7 @@ def load_config(path: Optional[str | Path] = None) -> Config:
         raise ConfigError(f"{cfg_path}: vault.path is required")
     vault = VaultConfig(
         path=_expand(v["path"]),
+        path_origin=str(v.get("path_origin", "existing_config")).strip() or "existing_config",
         include_folders=list(v.get("include_folders") or []),
         exclude_folders=list(v.get("exclude_folders") or []),
     )

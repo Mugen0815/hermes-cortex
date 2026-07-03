@@ -7,6 +7,7 @@ Subcommands:
     cortex search  "<query>" [--top-k N] [filters...] [--no-boost] [--json]
     cortex search-eval [--cases PATH] [--baseline PATH] [--output PATH] [--json]
     cortex validate-frontmatter [--config PATH] [--path PATH ...] [--json] [--strict]
+    cortex wiki-health [--config PATH] [--json] [--strict]
     cortex context "<query>" [--top-k N] [filters...] [--budget N] [--no-hermes-memory]
     cortex config  path|show
     cortex cron    install|uninstall|status [--config PATH]
@@ -719,6 +720,33 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_wiki_health(args: argparse.Namespace) -> int:
+    from cortex.wiki_health import check_wiki_health
+
+    cfg = resolve_config(getattr(args, "config", None))
+    report = check_wiki_health(cfg)
+
+    if args.json:
+        print_json(report.to_dict())
+    else:
+        print("hermes-cortex wiki health")
+        print(f"  Config:    {report.config_path}")
+        print(f"  Vault:     {report.vault_path}")
+        print(f"  Status:    {'ok' if report.ok else 'issues found'}")
+        print(f"  Errors:    {len(report.errors)}")
+        print(f"  Warnings:  {len(report.warnings)}")
+        if report.issues:
+            print("\nIssues:")
+            for issue in report.issues:
+                print(f"  - [{issue.severity}] {issue.code}: {issue.path} — {issue.message}")
+
+    if report.errors:
+        return 1
+    if args.strict and report.warnings:
+        return 1
+    return 0
+
+
 # ---- entry point -------------------------------------------------------------
 
 
@@ -816,6 +844,16 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     vf.add_argument("--json", action="store_true", help="Output JSON instead of human-readable text")
     vf.add_argument("--strict", action="store_true", help="Treat warnings as a non-zero exit")
     vf.set_defaults(func=_cmd_validate_frontmatter)
+
+    # wiki-health
+    wh = sub.add_parser(
+        "wiki-health",
+        help="Read-only health check for the Cortex/llm-wiki Vault contract",
+    )
+    wh.add_argument("--config", type=str, help="Path to config.yaml")
+    wh.add_argument("--json", action="store_true", help="Output deterministic JSON instead of human-readable text")
+    wh.add_argument("--strict", action="store_true", help="Treat warnings as a non-zero exit")
+    wh.set_defaults(func=_cmd_wiki_health)
 
     # context
     cx = sub.add_parser(

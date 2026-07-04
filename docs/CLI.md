@@ -52,7 +52,7 @@ Options:
 |---|---|
 | `--yes`, `-y` | Non-interactive, accept defaults |
 | `--dry-run` | Show actions without writing files |
-| `--vault PATH` | Override vault path |
+| `--vault PATH` | Select the Vault path during init. With an existing config, a mismatching non-interactive `--yes --vault` run fails before seeding instead of creating a second Vault. |
 | `--config PATH` | Override config path |
 | `--legacy-update-hermes-memory` | Opt in to updating Hermes `MEMORY.md` vault coordinates |
 | `--legacy-update-soul-memory-rules` | Opt in to patching `SOUL.md` with Cortex memory rules |
@@ -70,6 +70,12 @@ of truth. Init path selection is deliberately one-way:
 After init, commands such as `index`, `embed`, `search`, hooks, and lifecycle use
 configured `vault.path`. They do not fall back to `WIKI_PATH`, `wiki.path`, or a
 second wiki directory.
+
+For non-interactive runs, Cortex refuses split-brain init state: `init --yes
+--config existing.yaml --vault NEW` fails before seed writes when
+`existing.yaml` already points at a different `vault.path` and the config update
+would be skipped. Re-run interactively to choose an overwrite policy or update the
+config manually.
 
 ## Index
 

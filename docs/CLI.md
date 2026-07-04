@@ -371,7 +371,7 @@ Options:
 |---|---|---|
 | `install` | `--config PATH` | Use an explicit Cortex config file |
 | `install` | `--job nightly|weekly|all` | Job to install; default `nightly` |
-| `install` | `--vault PATH` | Override vault path |
+| `install` | `--vault PATH` | Deprecated compatibility only; must match configured `vault.path` after normalization. Mismatching values are rejected before job build/save. The Cortex config `vault.path` is the single source of truth. |
 | `uninstall` | `--config PATH` | Use an explicit Cortex config file |
 | `uninstall` | `--job nightly|weekly|all` | Job to remove; default `nightly` |
 | `status` | `--config PATH` | Use an explicit Cortex config file |

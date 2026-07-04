@@ -185,6 +185,88 @@ def test_cli_init_yes_existing_config_wins_over_wiki_path_and_runtime_uses_confi
     assert f"Vault:          {configured.resolve()} (ok)" in status_out
     assert str(wiki.resolve()) not in status_out
 
+
+def test_cli_init_yes_explicit_vault_mismatch_aborts_without_partial_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``init --yes --config existing --vault NEW`` where NEW != config vault.path
+    must abort before seed writes; no partial seed in NEW.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    configured.mkdir()
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    cfg_before = cfg.read_text(encoding="utf-8")
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Refusing to seed" in err
+    assert "points at" in err
+    assert "--yes" in err
+    assert not new_vault.exists()
+    assert not (new_vault / "SCHEMA.md").exists()
+    assert cfg.read_text(encoding="utf-8") == cfg_before
+
+
+def test_cli_init_yes_explicit_vault_matching_config_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``init --yes --config existing --vault MATCH`` where MATCH normalizes to
+    config vault.path must succeed normally.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(configured)])
+
+    assert rc == 0
+    assert (configured / "SCHEMA.md").exists()
+
+
+def test_cli_init_yes_explicit_vault_fresh_config_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``init --yes --vault NEW`` without an existing config must seed NEW and
+    write the fresh config pointing at NEW.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 0
+    assert (new_vault / "SCHEMA.md").exists()
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert raw["vault"]["path"] == str(new_vault.resolve())
+
 def test_config_show_legacy_context_label_depends_on_semantic_presence(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -364,6 +446,60 @@ def test_wiki_health_reports_raw_body_sha256_drift(
     assert ("raw_source_sha256_drift", "raw/articles/source.md") in {
         (i["code"], i["path"]) for i in payload["issues"]
     }
+
+
+def test_wiki_health_missing_contract_is_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Missing-contract/error paths must not mutate the vault tree."""
+    cfg = _setup_wiki_health(tmp_path)
+    vault = tmp_path / "vault"
+    (vault / "SCHEMA.md").unlink()
+    (vault / "raw" / "papers").rmdir()
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_wiki_health_sha256_drift_path_is_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Error path for raw body sha256 drift must not mutate the vault tree."""
+    cfg = _setup_wiki_health(tmp_path)
+    raw_source = tmp_path / "vault" / "raw" / "articles" / "source.md"
+    raw_source.write_text(raw_source.read_text(encoding="utf-8") + "mutated\n", encoding="utf-8")
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_wiki_health_log_md_as_directory_is_reported_and_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If log.md is a directory (non-file), wiki-health must report it as a
+    missing root file and not mutate the vault tree.
+    """
+    cfg = _setup_wiki_health(tmp_path)
+    vault = tmp_path / "vault"
+    (vault / "log.md").unlink()
+    (vault / "log.md").mkdir()
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert ("missing_root_file", "log.md") in {(i["code"], i["path"]) for i in payload["issues"]}
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
 
 
 def test_cli_reset_requires_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

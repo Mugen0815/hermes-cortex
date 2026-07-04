@@ -620,3 +620,34 @@ def test_install_nightly_accepts_no_vault_override(monkeypatch, tmp_path):
 
     assert result["action"] == "created"
     assert len(saved) == 1
+
+
+def test_cron_install_help_describes_deprecated_compatibility_not_override(capsys):
+    """Regression: ``cron install --vault`` help must not claim an override.
+
+    F1 contract: --vault is deprecated compatibility input that must match the
+    configured ``vault.path``; mismatches are rejected. The old wording
+    ``Override vault path (default: ~/hermes-workspace/vault)`` contradicted the
+    single-Vault contract and must not silently return.
+    """
+    from cortex.cli import configure_parser
+
+    import argparse
+
+    import pytest as _pytest
+
+    parser = argparse.ArgumentParser(prog="cortex")
+    configure_parser(parser)
+
+    # argparse writes subcommand help to stdout and raises SystemExit(0).
+    with _pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(["cron", "install", "--help"])
+    assert excinfo.value.code == 0
+
+    help_text = capsys.readouterr().out
+    assert "Override vault path" not in help_text
+    assert "~/hermes-workspace/vault)" not in help_text
+    help_lower = help_text.lower()
+    assert "deprecated" in help_lower
+    assert "vault.path" in help_lower
+    assert "rejected" in help_lower or "match" in help_lower

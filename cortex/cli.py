@@ -970,7 +970,12 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     cr_install = cr_sub.add_parser("install", help="Install/update a cortex cron job")
     cr_install.add_argument("--config", type=str, help="Path to config.yaml")
     cr_install.add_argument("--job", choices=["nightly", "weekly", "all"], default="nightly", help="Cron job to install (default: nightly)")
-    cr_install.add_argument("--vault", type=str, help="Override vault path (default: ~/hermes-workspace/vault)")
+    cr_install.add_argument(
+        "--vault",
+        type=str,
+        help="Deprecated compatibility only; must match configured vault.path after normalization. "
+        "Mismatching values are rejected before job build/save.",
+    )
     cr_install.set_defaults(func=_cmd_cron_install)
 
     cr_uninstall = cr_sub.add_parser("uninstall", help="Remove a cortex cron job")

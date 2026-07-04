@@ -53,6 +53,9 @@ def _append_lifecycle_log(cfg: Config, event: LifecycleLogEvent) -> bool:
     ``log.md`` is operator history, not runtime state. Missing logs are a
     non-fatal health concern handled by ``wiki-health``; runtime lifecycle
     commands must not create the file, rewrite it, or depend on its contents.
+    Any ``OSError`` from open/append/newline check/write/flush/fsync is caught,
+    logged as a warning, and reported as a non-fatal ``False`` return so that
+    maintenance/nightly success paths never abort on log-write failures.
     """
 
     log_path = cfg.vault.path / "log.md"
@@ -75,14 +78,18 @@ def _append_lifecycle_log(cfg: Config, event: LifecycleLogEvent) -> bool:
         parts.append("paths=" + json.dumps(sorted(event.paths), ensure_ascii=False, separators=(",", ":")))
     entry = f"- {timestamp} " + " ".join(parts) + "\n"
 
-    with log_path.open("a+b") as f:
-        if log_path.stat().st_size > 0:
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                f.write(b"\n")
-        f.write(entry.encode("utf-8"))
-        f.flush()
-        os.fsync(f.fileno())
+    try:
+        with log_path.open("a+b") as f:
+            if log_path.stat().st_size > 0:
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")
+            f.write(entry.encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as exc:
+        log.warning("Lifecycle log append failed (non-fatal): %s: %s", log_path, exc)
+        return False
     return True
 
 

@@ -80,11 +80,11 @@ Cortex has exactly one durable runtime Vault source of truth: `vault.path` in th
 active Cortex config. During `init`, an explicit `--vault` path selects the Vault
 for fresh config creation or interactive overwrite; otherwise an existing config
 wins; only then may `WIKI_PATH` seed the initial `vault.path` for new/unconfigured
-installs. Non-interactive `init --yes --config existing.yaml --vault NEW` fails
-before seed writes when `existing.yaml` already points at a different
-`vault.path`, so it cannot create a second partial Vault. Runtime commands, hooks,
-search, indexing, and lifecycle operations use the configured `vault.path`, not
-`WIKI_PATH`, `wiki.path`, or a fallback wiki directory.
+installs. Non-interactive `init --yes` with an existing config fails before seed
+writes if the config has no readable `vault.path`, or if an explicit `--vault NEW`
+does not match it, so the preserved config cannot diverge from a newly seeded
+Vault. Runtime commands, hooks, search, indexing, and lifecycle operations use the
+configured `vault.path`, not `WIKI_PATH`, `wiki.path`, or a fallback wiki directory.
 
 Fresh Vaults also include llm-wiki-compatible root/orientation material in that
 same Vault root: `SCHEMA.md`, `index.md`, `log.md`, and `raw/{articles,papers,transcripts,assets}`.

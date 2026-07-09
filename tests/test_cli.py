@@ -222,6 +222,54 @@ def test_cli_init_yes_explicit_vault_mismatch_aborts_without_partial_seed(
     assert cfg.read_text(encoding="utf-8") == cfg_before
 
 
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        "vault: [\n",
+        "vault: {}\n",
+    ],
+    ids=["invalid-yaml", "missing-vault-path"],
+)
+def test_cli_init_yes_existing_config_without_readable_vault_path_aborts_before_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    config_text: str,
+) -> None:
+    """An existing config that cannot provide ``vault.path`` must not be
+    preserved while a separate explicit Vault is seeded.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(config_text, encoding="utf-8")
+    cfg_before = cfg.read_text(encoding="utf-8")
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Refusing to seed" in err
+    assert "readable vault.path" in err
+    assert "--yes" in err
+    assert not new_vault.exists()
+    assert not (new_vault / "SCHEMA.md").exists()
+    assert cfg.read_text(encoding="utf-8") == cfg_before
+
+
+def test_init_help_describes_vault_selection_without_runtime_override(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["init", "--help"])
+    assert excinfo.value.code == 0
+
+    help_text = capsys.readouterr().out
+    assert "Override vault path" not in help_text
+    assert "Select the Vault path during init" in help_text
+
+
 def test_cli_init_yes_explicit_vault_matching_config_succeeds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

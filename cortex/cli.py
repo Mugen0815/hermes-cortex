@@ -59,23 +59,27 @@ from cortex.installer import (
 
 
 def _validate_yes_vault_path(config_path: Path, resolved_vault: Path, explicit_vault: str | None) -> int:
-    """Fail fast on non-interactive init when explicit ``--vault`` differs from
-    existing config and config overwrite would be skipped.
+    """Fail fast when non-interactive init would preserve an incompatible config.
 
     Returns 0 if ok, or a nonzero exit code (2) if the mismatch is fatal.
-    ``cortex init --yes`` uses ``overwrite_policy="skip"``. If the config already
-    exists with a different ``vault.path``, resolving the explicit vault and then
-    seeding NEW would leave runtime config still pointing at OLD (a split-brain
-    Vault). Abort with a clear diagnostic before any seed writes.
+    ``cortex init --yes`` uses ``overwrite_policy="skip"``. An existing config
+    must therefore provide a readable ``vault.path``. If an explicit path differs,
+    resolving it and then seeding NEW would leave runtime config still pointing at
+    OLD (a split-brain Vault). Abort with a clear diagnostic before any seed writes.
     """
-    if not explicit_vault:
-        return 0
     if not config_path.exists():
         return 0
     existing = _read_existing_vault_path(config_path)
     if existing is None:
-        return 0
-    if existing != resolved_vault:
+        print(
+            f"  \u2717 Refusing to seed {resolved_vault}: existing config {config_path} "
+            "does not contain a readable vault.path and `--yes` skips config overwrite. "
+            "Fix or remove the config file, or re-run without --yes to choose an "
+            "overwrite policy.",
+            file=sys.stderr,
+        )
+        return 2
+    if explicit_vault and existing != resolved_vault:
         print(
             f"  \u2717 Refusing to seed {resolved_vault}: existing config {config_path} "
             f"points at {existing} and `--yes` skips config overwrite. "
@@ -799,7 +803,11 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     init = sub.add_parser("init", help="Set up vault, templates, and config interactively")
     init.add_argument("--yes", "-y", action="store_true", help="Non-interactive, accept all defaults")
     init.add_argument("--dry-run", action="store_true", help="Show actions without writing files")
-    init.add_argument("--vault", type=str, help="Override vault path")
+    init.add_argument(
+        "--vault",
+        type=str,
+        help="Select the Vault path during init; existing non-interactive configs must match",
+    )
     init.add_argument("--config", type=str, help="Override config path")
     init.add_argument(
         "--legacy-update-hermes-memory",

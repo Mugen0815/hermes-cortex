@@ -414,6 +414,37 @@ def _upsert_job(job: dict[str, Any], cfg: Any, finder: Any, *, job_name: str) ->
     }
 
 
+class VaultMismatchError(ValueError):
+    """Raised when ``--vault PATH`` does not match the configured ``vault.path``."""
+
+
+def _resolve_vault_override(
+    cortex_cfg: Any,
+    vault_path: str | None,
+) -> Path | None:
+    """Resolve and validate an explicit cron ``--vault`` override.
+
+    The single canonical Vault contract requires the lifecycle commands in cron
+    prompts to operate on the same ``vault.path`` that config-based runtime uses.
+    ``--vault PATH`` is accepted only as a deprecated/no-op compatibility input
+    whose normalized value matches the configured ``vault.path``. A mismatch
+    raises :class:`VaultMismatchError` *before* any job build/save so the user
+    cannot silently install a job pointing at a different Vault.
+    """
+    if vault_path is None:
+        return None
+    supplied = Path(vault_path).expanduser().resolve()
+    configured = Path(str(cortex_cfg.vault.path)).expanduser().resolve()
+    if supplied != configured:
+        raise VaultMismatchError(
+            f"cron install --vault {vault_path} does not match configured vault.path "
+            f"{configured}. The Cortex config vault.path is the single source of truth; "
+            "mismatching --vault is rejected. Update the config file to change the Vault, "
+            "or omit --vault to use the configured path."
+        )
+    return configured
+
+
 def install(
     vault_path: str | None = None,
     config_path: str | Path | None = None,
@@ -422,11 +453,12 @@ def install(
     """Install (or update) configured cortex cron job(s). Defaults to NightlyPromotion."""
     selected = _normalize_job(job)
     cortex_cfg = _load_cortex_config(config_path)
+    resolved_vault = _resolve_vault_override(cortex_cfg, vault_path)
     if selected == "nightly":
-        return _install_nightly(cortex_cfg, vault_path)
+        return _install_nightly(cortex_cfg, str(resolved_vault) if resolved_vault else None)
     if selected == "weekly":
-        return _install_weekly(cortex_cfg, vault_path)
-    return {"action": "multiple", "jobs": [_install_nightly(cortex_cfg, vault_path), _install_weekly(cortex_cfg, vault_path)]}
+        return _install_weekly(cortex_cfg, str(resolved_vault) if resolved_vault else None)
+    return {"action": "multiple", "jobs": [_install_nightly(cortex_cfg, str(resolved_vault) if resolved_vault else None), _install_weekly(cortex_cfg, str(resolved_vault) if resolved_vault else None)]}
 
 
 def _remove_job(cfg: Any, finder: Any, *, job_name: str) -> dict[str, Any]:

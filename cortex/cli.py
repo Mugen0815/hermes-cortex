@@ -7,6 +7,7 @@ Subcommands:
     cortex search  "<query>" [--top-k N] [filters...] [--no-boost] [--json]
     cortex search-eval [--cases PATH] [--baseline PATH] [--output PATH] [--json]
     cortex validate-frontmatter [--config PATH] [--path PATH ...] [--json] [--strict]
+    cortex wiki-health [--config PATH] [--json] [--strict]
     cortex context "<query>" [--top-k N] [filters...] [--budget N] [--no-hermes-memory]
     cortex config  path|show
     cortex cron    install|uninstall|status [--config PATH]
@@ -46,21 +47,60 @@ from cortex.installer import (
     DEFAULT_HERMES_MEMORY,
     DEFAULT_HERMES_SOUL,
     DEFAULT_HERMES_USER,
-    DEFAULT_VAULT_PATH,
     InstallPlan,
     Installer,
+    _read_existing_vault_path,
     build_plan_interactively,
+    resolve_init_vault_path,
 )
 
 
 # ---- init --------------------------------------------------------------------
 
 
+def _validate_yes_vault_path(config_path: Path, resolved_vault: Path, explicit_vault: str | None) -> int:
+    """Fail fast when non-interactive init would preserve an incompatible config.
+
+    Returns 0 if ok, or a nonzero exit code (2) if the mismatch is fatal.
+    ``cortex init --yes`` uses ``overwrite_policy="skip"``. An existing config
+    must therefore provide a readable ``vault.path``. If an explicit path differs,
+    resolving it and then seeding NEW would leave runtime config still pointing at
+    OLD (a split-brain Vault). Abort with a clear diagnostic before any seed writes.
+    """
+    if not config_path.exists():
+        return 0
+    existing = _read_existing_vault_path(config_path)
+    if existing is None:
+        print(
+            f"  \u2717 Refusing to seed {resolved_vault}: existing config {config_path} "
+            "does not contain a readable vault.path and `--yes` skips config overwrite. "
+            "Fix or remove the config file, or re-run without --yes to choose an "
+            "overwrite policy.",
+            file=sys.stderr,
+        )
+        return 2
+    if explicit_vault and existing != resolved_vault:
+        print(
+            f"  \u2717 Refusing to seed {resolved_vault}: existing config {config_path} "
+            f"points at {existing} and `--yes` skips config overwrite. "
+            "Re-run without --yes (interactive) to choose an overwrite policy, "
+            "or update the config file manually.",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     if args.yes:
+        config_path = Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH
+        vault_path, vault_source, vault_note = resolve_init_vault_path(config_path, args.vault)
+        rc = _validate_yes_vault_path(config_path, vault_path, args.vault)
+        if rc != 0:
+            return rc
         plan = InstallPlan(
-            vault_path=Path(args.vault).expanduser().resolve() if args.vault else DEFAULT_VAULT_PATH,
-            config_path=Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH,
+            vault_path=vault_path,
+            config_path=config_path,
             hermes_memory_path=DEFAULT_HERMES_MEMORY if DEFAULT_HERMES_MEMORY.exists() else None,
             hermes_user_path=DEFAULT_HERMES_USER if DEFAULT_HERMES_USER.exists() else None,
             hermes_soul_path=DEFAULT_HERMES_SOUL if DEFAULT_HERMES_SOUL.exists() else None,
@@ -68,13 +108,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
             update_hermes_soul_memory_rules=args.legacy_update_soul_memory_rules,
             overwrite_policy="skip",
             dry_run=args.dry_run,
+            vault_path_source=vault_source,
+            vault_path_note=vault_note,
         )
     else:
-        plan = build_plan_interactively()
-        if args.vault:
-            plan.vault_path = Path(args.vault).expanduser().resolve()
-        if args.config:
-            plan.config_path = Path(args.config).expanduser().resolve()
+        plan = build_plan_interactively(config_path=args.config, explicit_vault=args.vault)
         plan.dry_run = args.dry_run
 
     Installer(plan).run()
@@ -499,13 +537,16 @@ def _print_cron_install_result(result: dict) -> int:
 
 
 def _cmd_cron_install(args: argparse.Namespace) -> int:
-    from cortex.cron import install
+    from cortex.cron import VaultMismatchError, install
 
-    result = install(
-        vault_path=getattr(args, "vault", None),
-        config_path=getattr(args, "config", None),
-        job=getattr(args, "job", "nightly"),
-    )
+    try:
+        result = install(
+            vault_path=getattr(args, "vault", None),
+            config_path=getattr(args, "config", None),
+            job=getattr(args, "job", "nightly"),
+        )
+    except VaultMismatchError as exc:
+        return print_error(f"\n  \u2717  {exc}", exit_code=2)
     if result.get("action") == "multiple":
         codes = [_print_cron_install_result(item) for item in result["jobs"]]
         print("  config: ~/.hermes/cron/jobs.json")
@@ -718,6 +759,33 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_wiki_health(args: argparse.Namespace) -> int:
+    from cortex.wiki_health import check_wiki_health
+
+    cfg = resolve_config(getattr(args, "config", None))
+    report = check_wiki_health(cfg)
+
+    if args.json:
+        print_json(report.to_dict())
+    else:
+        print("hermes-cortex wiki health")
+        print(f"  Config:    {report.config_path}")
+        print(f"  Vault:     {report.vault_path}")
+        print(f"  Status:    {'ok' if report.ok else 'issues found'}")
+        print(f"  Errors:    {len(report.errors)}")
+        print(f"  Warnings:  {len(report.warnings)}")
+        if report.issues:
+            print("\nIssues:")
+            for issue in report.issues:
+                print(f"  - [{issue.severity}] {issue.code}: {issue.path} — {issue.message}")
+
+    if report.errors:
+        return 1
+    if args.strict and report.warnings:
+        return 1
+    return 0
+
+
 # ---- entry point -------------------------------------------------------------
 
 
@@ -735,7 +803,11 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     init = sub.add_parser("init", help="Set up vault, templates, and config interactively")
     init.add_argument("--yes", "-y", action="store_true", help="Non-interactive, accept all defaults")
     init.add_argument("--dry-run", action="store_true", help="Show actions without writing files")
-    init.add_argument("--vault", type=str, help="Override vault path")
+    init.add_argument(
+        "--vault",
+        type=str,
+        help="Select the Vault path during init; existing non-interactive configs must match",
+    )
     init.add_argument("--config", type=str, help="Override config path")
     init.add_argument(
         "--legacy-update-hermes-memory",
@@ -815,6 +887,16 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     vf.add_argument("--json", action="store_true", help="Output JSON instead of human-readable text")
     vf.add_argument("--strict", action="store_true", help="Treat warnings as a non-zero exit")
     vf.set_defaults(func=_cmd_validate_frontmatter)
+
+    # wiki-health
+    wh = sub.add_parser(
+        "wiki-health",
+        help="Read-only health check for the Cortex/llm-wiki Vault contract",
+    )
+    wh.add_argument("--config", type=str, help="Path to config.yaml")
+    wh.add_argument("--json", action="store_true", help="Output deterministic JSON instead of human-readable text")
+    wh.add_argument("--strict", action="store_true", help="Treat warnings as a non-zero exit")
+    wh.set_defaults(func=_cmd_wiki_health)
 
     # context
     cx = sub.add_parser(
@@ -896,7 +978,12 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     cr_install = cr_sub.add_parser("install", help="Install/update a cortex cron job")
     cr_install.add_argument("--config", type=str, help="Path to config.yaml")
     cr_install.add_argument("--job", choices=["nightly", "weekly", "all"], default="nightly", help="Cron job to install (default: nightly)")
-    cr_install.add_argument("--vault", type=str, help="Override vault path (default: ~/hermes-workspace/vault)")
+    cr_install.add_argument(
+        "--vault",
+        type=str,
+        help="Deprecated compatibility only; must match configured vault.path after normalization. "
+        "Mismatching values are rejected before job build/save.",
+    )
     cr_install.set_defaults(func=_cmd_cron_install)
 
     cr_uninstall = cr_sub.add_parser("uninstall", help="Remove a cortex cron job")

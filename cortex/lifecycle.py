@@ -22,7 +22,7 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,63 @@ log = logging.getLogger("cortex.lifecycle")
 
 
 # ---- Shared infrastructure -------------------------------------------------
+
+@dataclass(frozen=True)
+class LifecycleLogEvent:
+    """Compact append-only lifecycle log event for ``vault/log.md``."""
+
+    event: str
+    mode: str
+    status: str
+    counts: dict[str, int] = field(default_factory=dict)
+    paths: list[str] = field(default_factory=list)
+    timestamp: str | None = None
+
+
+def _append_lifecycle_log(cfg: Config, event: LifecycleLogEvent) -> bool:
+    """Append a compact lifecycle event to ``{vault.path}/log.md`` if present.
+
+    ``log.md`` is operator history, not runtime state. Missing logs are a
+    non-fatal health concern handled by ``wiki-health``; runtime lifecycle
+    commands must not create the file, rewrite it, or depend on its contents.
+    Any ``OSError`` from open/append/newline check/write/flush/fsync is caught,
+    logged as a warning, and reported as a non-fatal ``False`` return so that
+    maintenance/nightly success paths never abort on log-write failures.
+    """
+
+    log_path = cfg.vault.path / "log.md"
+    if not log_path.exists():
+        log.warning("Lifecycle log missing; skipping append: %s", log_path)
+        return False
+    if not log_path.is_file():
+        log.warning("Lifecycle log is not a file; skipping append: %s", log_path)
+        return False
+
+    timestamp = event.timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    parts = [
+        f"event={event.event}",
+        f"mode={event.mode}",
+        f"status={event.status}",
+    ]
+    for key in sorted(event.counts):
+        parts.append(f"{key}={event.counts[key]}")
+    if event.paths:
+        parts.append("paths=" + json.dumps(sorted(event.paths), ensure_ascii=False, separators=(",", ":")))
+    entry = f"- {timestamp} " + " ".join(parts) + "\n"
+
+    try:
+        with log_path.open("a+b") as f:
+            if log_path.stat().st_size > 0:
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")
+            f.write(entry.encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as exc:
+        log.warning("Lifecycle log append failed (non-fatal): %s: %s", log_path, exc)
+        return False
+    return True
 
 
 @dataclass
@@ -82,6 +139,37 @@ class MaintenanceReport:
                 lines.append(f"         Reason: {s.skip_reason}")
         lines.append(f"  Total: {self.total_duration_seconds:.1f}s")
         return "\n".join(lines)
+
+
+def _maintenance_counts(report: MaintenanceReport) -> dict[str, int]:
+    return {
+        "steps": len(report.steps),
+        "errors": len(report.errors),
+        "skipped": sum(1 for step in report.steps if step.skipped),
+    }
+
+
+def _maintenance_paths(cfg: Config) -> list[str]:
+    return [
+        str(cfg.index.chunks_path),
+        str(cfg.index.chroma_path),
+        str(cfg.index.chunks_path.parent / "graph"),
+    ]
+
+
+def _record_maintenance_log(cfg: Config, report: MaintenanceReport) -> None:
+    if report.dry_run:
+        return
+    _append_lifecycle_log(
+        cfg,
+        LifecycleLogEvent(
+            event="lifecycle.maintenance",
+            mode="write",
+            status="ok" if report.ok else "error",
+            counts=_maintenance_counts(report),
+            paths=_maintenance_paths(cfg),
+        ),
+    )
 
 
 # ---- IndexMaintenance ------------------------------------------------------
@@ -211,6 +299,7 @@ def run_maintenance(
     report.steps.append(index_result)
     if not index_result.ok:
         report.total_duration_seconds = time.monotonic() - t0
+        _record_maintenance_log(cfg, report)
         return report  # abort on error
 
     # Step 2: Embed
@@ -219,6 +308,7 @@ def run_maintenance(
     report.steps.append(embed_result)
     if not embed_result.ok:
         report.total_duration_seconds = time.monotonic() - t0
+        _record_maintenance_log(cfg, report)
         return report  # abort on error
 
     # Step 3: Graph build (always runs — it's fast and reads chunks.jsonl)
@@ -227,6 +317,7 @@ def run_maintenance(
     report.steps.append(graph_result)
 
     report.total_duration_seconds = time.monotonic() - t0
+    _record_maintenance_log(cfg, report)
     log.info("Maintenance complete in %.1fs", report.total_duration_seconds)
     return report
 
@@ -363,6 +454,29 @@ class NightlyPromotionReport:
         return "\n".join(lines)
 
 
+def _record_nightly_log(cfg: Config, report: NightlyPromotionReport) -> None:
+    if report.dry_run:
+        return
+    paths = [item["file"] for item in report.promoted if item.get("file")]
+    paths.extend(item["file"] for item in report.superseded if item.get("file"))
+    _append_lifecycle_log(
+        cfg,
+        LifecycleLogEvent(
+            event="lifecycle.nightly",
+            mode="write",
+            status="error" if report.error else "ok",
+            counts={
+                "candidates": len(report.candidates),
+                "promoted": len(report.promoted),
+                "duplicates_skipped": len(report.skipped_duplicates),
+                "contradiction_blocks": len(report.contradiction_blocks),
+                "superseded": len(report.superseded),
+            },
+            paths=paths,
+        ),
+    )
+
+
 def run_nightly_promotion(
     cfg: Config,
     *,
@@ -423,6 +537,7 @@ def run_nightly_promotion(
         report.error = str(e)
     finally:
         report.duration_seconds = time.monotonic() - t0
+        _record_nightly_log(cfg, report)
     return report
 
 

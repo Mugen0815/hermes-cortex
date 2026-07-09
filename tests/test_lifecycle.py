@@ -500,6 +500,39 @@ class TestRunMaintenanceDryRun:
         report = run_maintenance(cfg, dry_run=True)
         assert "1 new" in report.steps[0].summary
 
+    def test_dry_run_does_not_append_lifecycle_log(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        log_path = cfg.vault.path / "log.md"
+        log_path.write_text("# Log\n\nexisting\n", encoding="utf-8")
+        before = log_path.read_bytes()
+
+        report = run_maintenance(cfg, dry_run=True)
+
+        assert report.ok is True
+        assert log_path.read_bytes() == before
+
+    def test_write_run_appends_lifecycle_log_after_final_status(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        log_path = cfg.vault.path / "log.md"
+        log_path.write_text("# Log\n\nexisting", encoding="utf-8")
+        before = log_path.read_bytes()
+        index_result = StepResult(name="index", summary="Indexed 1 file")
+        embed_result = StepResult(name="embed", skipped=True, skip_reason="no chunks changed")
+        graph_result = StepResult(name="graph_build", summary="Built graph")
+
+        with patch("cortex.lifecycle._run_index", return_value=index_result), \
+             patch("cortex.lifecycle._run_embed", return_value=embed_result), \
+             patch("cortex.lifecycle._run_graph_build", return_value=graph_result):
+            report = run_maintenance(cfg)
+
+        text = log_path.read_text(encoding="utf-8")
+        assert report.ok is True
+        assert log_path.read_bytes().startswith(before + b"\n")
+        assert "event=lifecycle.maintenance" in text
+        assert "mode=write" in text
+        assert "status=ok" in text
+        assert "steps=3" in text
+
 
 # ---- WeeklyReview (read-only) ----------------------------------------------
 
@@ -670,6 +703,7 @@ class TestRunWeeklyReview:
 
     def test_weekly_review_is_read_only(self, tmp_path):
         cfg = _make_config(tmp_path)
+        (cfg.vault.path / "log.md").write_text("# Log\n\nexisting\n", encoding="utf-8")
         _write_graph_artifacts(
             cfg,
             nodes=[{"id": "note:A.md", "type": "note", "label": "A", "file": "A.md"}],
@@ -731,6 +765,63 @@ class TestRunNightlyPromotion:
         assert report.candidates[0]["target_file"] == "10_facts/Raw Fact.md"
         assert raw.read_text(encoding="utf-8") == before
         assert not (cfg.vault.path / "10_facts/Raw Fact.md").exists()
+
+    def test_write_run_appends_log_without_rewriting_history_or_raw_sources(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        log_path = cfg.vault.path / "log.md"
+        log_path.write_text("# Log\n\nexisting entry\n", encoding="utf-8")
+        before_log = log_path.read_bytes()
+        raw_source = _write_note(cfg.vault.path, "raw/articles/source.md", "RAW SOURCE\n")
+        before_raw = raw_source.read_text(encoding="utf-8")
+        _write_note(cfg.vault.path, "00_inbox/Raw Fact.md", textwrap.dedent("""\
+            ---
+            promote: true
+            promote_type: fact
+            tags: [memory]
+            confidence: high
+            importance: high
+            stability: stable
+            source: session
+            ---
+            # Raw Fact
+            Useful fact.
+        """))
+
+        report = run_nightly_promotion(cfg, dry_run=False, reference_date=date(2026, 5, 3))
+
+        text = log_path.read_text(encoding="utf-8")
+        assert report.ok is True
+        assert log_path.read_bytes().startswith(before_log)
+        assert raw_source.read_text(encoding="utf-8") == before_raw
+        assert "event=lifecycle.nightly" in text
+        assert "mode=write" in text
+        assert "status=ok" in text
+        assert "candidates=1" in text
+        assert "promoted=1" in text
+        assert "10_facts/Raw Fact.md" in text
+        assert "Useful fact." not in text
+
+    def test_missing_log_is_not_created_by_write_run(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        _write_note(cfg.vault.path, "00_inbox/Raw Fact.md", textwrap.dedent("""\
+            ---
+            promote: true
+            promote_type: fact
+            tags: [memory]
+            confidence: high
+            importance: high
+            stability: stable
+            source: session
+            ---
+            # Raw Fact
+            Useful fact.
+        """))
+
+        report = run_nightly_promotion(cfg, dry_run=False, reference_date=date(2026, 5, 3))
+
+        assert report.ok is True
+        assert [p["file"] for p in report.promoted] == ["10_facts/Raw Fact.md"]
+        assert not (cfg.vault.path / "log.md").exists()
 
     def test_promotes_candidate_with_normalized_frontmatter_and_derived_from(self, tmp_path):
         cfg = _make_config(tmp_path)
@@ -1034,3 +1125,119 @@ class TestCLILifecycle:
         out = capsys.readouterr().out
         assert "index" in out.lower()
         assert "graph_build" in out.lower() or "graph" in out.lower()
+
+
+class TestLifecycleLogAppendNonFatal:
+    """Tests for non-fatal lifecycle log append behavior."""
+
+    def test_unwritable_log_does_not_abort_maintenance(self, tmp_path) -> None:
+        cfg = _make_config(tmp_path)
+        log_path = cfg.vault.path / "log.md"
+        log_path.write_text("# Log\n\nexisting\n", encoding="utf-8")
+        before = log_path.read_bytes()
+
+        # Force _append_lifecycle_log's open call to raise OSError.
+        import cortex.lifecycle as lifecycle_mod
+
+        original_open = lifecycle_mod.Path.open
+
+        def patched_open(self, *args, **kwargs):
+            if self == log_path:
+                raise OSError("simulated write failure")
+            return original_open(self, *args, **kwargs)
+
+        index_result = StepResult(name="index", summary="Indexed 1 file")
+        embed_result = StepResult(name="embed", skipped=True, skip_reason="no chunks changed")
+        graph_result = StepResult(name="graph_build", summary="Built graph")
+
+        with patch("cortex.lifecycle._run_index", return_value=index_result), \
+             patch("cortex.lifecycle._run_embed", return_value=embed_result), \
+             patch("cortex.lifecycle._run_graph_build", return_value=graph_result), \
+             patch.object(lifecycle_mod.Path, "open", patched_open):
+            report = run_maintenance(cfg)
+
+        assert report.ok is True
+        assert log_path.read_bytes() == before
+
+    def test_log_as_directory_does_not_abort_maintenance(self, tmp_path) -> None:
+        cfg = _make_config(tmp_path)
+        log_dir = cfg.vault.path / "log.md"
+        log_dir.mkdir()
+
+        index_result = StepResult(name="index", summary="Indexed 1 file")
+        embed_result = StepResult(name="embed", skipped=True, skip_reason="no chunks changed")
+        graph_result = StepResult(name="graph_build", summary="Built graph")
+
+        with patch("cortex.lifecycle._run_index", return_value=index_result), \
+             patch("cortex.lifecycle._run_embed", return_value=embed_result), \
+             patch("cortex.lifecycle._run_graph_build", return_value=graph_result):
+            report = run_maintenance(cfg)
+
+        assert report.ok is True
+        assert log_dir.is_dir()
+
+    def test_unwritable_log_does_not_abort_nightly_promotion(self, tmp_path) -> None:
+        cfg = _make_config(tmp_path)
+        log_path = cfg.vault.path / "log.md"
+        log_path.write_text("# Log\n\nexisting\n", encoding="utf-8")
+        before = log_path.read_bytes()
+        _write_note(cfg.vault.path, "00_inbox/Raw Fact.md", textwrap.dedent("""\
+            ---
+            promote: true
+            promote_type: fact
+            tags: [memory]
+            confidence: high
+            importance: high
+            stability: stable
+            source: session
+            ---
+            # Raw Fact
+            Useful fact.
+        """))
+
+        # Patch _append_lifecycle_log to simulate a failed-but-caught OSError
+        # append (returns False). The real try/except is tested directly in
+        # test_append_lifecycle_log_catches_oserror below.
+        with patch("cortex.lifecycle._append_lifecycle_log", return_value=False):
+            report = run_nightly_promotion(cfg, dry_run=False, reference_date=date(2026, 5, 3))
+
+        assert report.ok is True
+        assert log_path.read_bytes() == before
+        assert [p["file"] for p in report.promoted] == ["10_facts/Raw Fact.md"]
+
+    def test_append_lifecycle_log_catches_oserror_and_returns_false(self, tmp_path) -> None:
+        """Directly test that _append_lifecycle_log catches OSError from open and
+        returns False instead of raising.
+        """
+        from cortex.lifecycle import LifecycleLogEvent, _append_lifecycle_log
+
+        cfg = _make_config(tmp_path)
+        log_path = cfg.vault.path / "log.md"
+        log_path.write_text("# Log\n\nexisting\n", encoding="utf-8")
+
+        import cortex.lifecycle as lifecycle_mod
+
+        def raise_oserror(*args, **kwargs):
+            raise OSError("simulated write failure")
+
+        event = LifecycleLogEvent(event="test", mode="write", status="ok")
+
+        with patch.object(lifecycle_mod.Path, "open", raise_oserror):
+            result = _append_lifecycle_log(cfg, event)
+
+        assert result is False
+
+    def test_missing_log_is_not_created_by_maintenance_write(self, tmp_path) -> None:
+        cfg = _make_config(tmp_path)
+
+        index_result = StepResult(name="index", summary="Indexed 1 file")
+        embed_result = StepResult(name="embed", skipped=True, skip_reason="no chunks changed")
+        graph_result = StepResult(name="graph_build", summary="Built graph")
+
+        with patch("cortex.lifecycle._run_index", return_value=index_result), \
+             patch("cortex.lifecycle._run_embed", return_value=embed_result), \
+             patch("cortex.lifecycle._run_graph_build", return_value=graph_result):
+            report = run_maintenance(cfg)
+
+        assert report.ok is True
+        assert not (cfg.vault.path / "log.md").exists()

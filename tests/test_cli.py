@@ -6,11 +6,14 @@ sentence-transformers) are mocked when needed.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from cortex.cli import main
 
@@ -61,6 +64,256 @@ def _setup(tmp_path: Path) -> Path:
     )
     return cfg_path
 
+
+def _setup_wiki_health(tmp_path: Path) -> Path:
+    vault = tmp_path / "vault"
+    for rel in [
+        "00_inbox",
+        "10_facts",
+        "20_decisions",
+        "30_projects",
+        "40_runbooks",
+        "50_people",
+        "60_maps",
+        "80_templates",
+        "raw/articles",
+        "raw/papers",
+        "raw/transcripts",
+        "raw/assets",
+    ]:
+        (vault / rel).mkdir(parents=True, exist_ok=True)
+    for rel in ["SCHEMA.md", "index.md", "log.md"]:
+        (vault / rel).write_text(f"# {rel}\n", encoding="utf-8")
+    (vault / "raw" / "README.md").write_text("# Raw\n", encoding="utf-8")
+
+    raw_body = "# Source\n\nOriginal raw body.\n"
+    raw_hash = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
+    (vault / "raw" / "articles" / "source.md").write_text(
+        f"---\nsource_url: https://example.invalid/source\ningested: 2026-07-03\nsha256: {raw_hash}\n---\n\n{raw_body}",
+        encoding="utf-8",
+    )
+
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        dedent(
+            f"""\
+            vault:
+              path: {vault}
+              include_folders: [10_facts, 20_decisions, 30_projects, 40_runbooks, 50_people, 60_maps]
+              exclude_folders: [00_inbox, 80_templates, raw]
+            index:
+              chunks_path: {tmp_path / "chunks.jsonl"}
+              chroma_path: {tmp_path / "chroma"}
+              collection: test-coll
+            embeddings:
+              model: test-model
+              device: cpu
+            """
+        ),
+        encoding="utf-8",
+    )
+    return cfg_path
+
+
+def _isolate_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        "plugins:\n  enabled: []\n  disabled: []\nplatform_toolsets:\n  cli: []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    return hermes_home
+
+
+def test_cli_init_yes_uses_wiki_path_only_for_fresh_init(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+
+    assert rc == 0
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert raw["vault"]["path"] == str(wiki.resolve())
+    assert (wiki / "SCHEMA.md").exists()
+    assert (wiki / "raw" / "articles").is_dir()
+    out = capsys.readouterr().out
+    assert f"Vault path default: {wiki.resolve()} (source: WIKI_PATH)" in out
+
+
+def test_cli_init_yes_existing_config_wins_over_wiki_path_and_runtime_uses_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    configured.mkdir()
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    before = cfg.read_text(encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+    assert rc == 0
+    assert cfg.read_text(encoding="utf-8") == before
+    assert (configured / "SCHEMA.md").exists()
+    assert not wiki.exists()
+    out = capsys.readouterr().out
+    assert f"Vault path default: {configured.resolve()} (source: existing config)" in out
+    assert "retained over WIKI_PATH" in out
+    assert "planned vault.path" in out
+
+    rc = main(["status", "--config", str(cfg)])
+    assert rc == 0
+    status_out = capsys.readouterr().out
+    assert f"Vault:          {configured.resolve()} (ok)" in status_out
+    assert str(wiki.resolve()) not in status_out
+
+
+def test_cli_init_yes_explicit_vault_mismatch_aborts_without_partial_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``init --yes --config existing --vault NEW`` where NEW != config vault.path
+    must abort before seed writes; no partial seed in NEW.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    configured.mkdir()
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    cfg_before = cfg.read_text(encoding="utf-8")
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Refusing to seed" in err
+    assert "points at" in err
+    assert "--yes" in err
+    assert not new_vault.exists()
+    assert not (new_vault / "SCHEMA.md").exists()
+    assert cfg.read_text(encoding="utf-8") == cfg_before
+
+
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        "vault: [\n",
+        "vault: {}\n",
+    ],
+    ids=["invalid-yaml", "missing-vault-path"],
+)
+def test_cli_init_yes_existing_config_without_readable_vault_path_aborts_before_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    config_text: str,
+) -> None:
+    """An existing config that cannot provide ``vault.path`` must not be
+    preserved while a separate explicit Vault is seeded.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(config_text, encoding="utf-8")
+    cfg_before = cfg.read_text(encoding="utf-8")
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Refusing to seed" in err
+    assert "readable vault.path" in err
+    assert "--yes" in err
+    assert not new_vault.exists()
+    assert not (new_vault / "SCHEMA.md").exists()
+    assert cfg.read_text(encoding="utf-8") == cfg_before
+
+
+def test_init_help_describes_vault_selection_without_runtime_override(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["init", "--help"])
+    assert excinfo.value.code == 0
+
+    help_text = capsys.readouterr().out
+    assert "Override vault path" not in help_text
+    assert "Select the Vault path during init" in help_text
+
+
+def test_cli_init_yes_explicit_vault_matching_config_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``init --yes --config existing --vault MATCH`` where MATCH normalizes to
+    config vault.path must succeed normally.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(configured)])
+
+    assert rc == 0
+    assert (configured / "SCHEMA.md").exists()
+
+
+def test_cli_init_yes_explicit_vault_fresh_config_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``init --yes --vault NEW`` without an existing config must seed NEW and
+    write the fresh config pointing at NEW.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 0
+    assert (new_vault / "SCHEMA.md").exists()
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert raw["vault"]["path"] == str(new_vault.resolve())
 
 def test_config_show_legacy_context_label_depends_on_semantic_presence(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -130,6 +383,171 @@ def test_cli_index_subcommand(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     out = capsys.readouterr().out
     assert "Indexed" in out
     assert (tmp_path / "chunks.jsonl").exists()
+
+
+def test_wiki_health_success_and_json_are_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "config_path": str(cfg),
+        "vault_path": str(tmp_path / "vault"),
+        "ok": True,
+        "error_count": 0,
+        "warning_count": 0,
+        "issue_count": 0,
+        "issues": [],
+    }
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_wiki_health_reports_missing_contract_items(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    vault = tmp_path / "vault"
+    (vault / "SCHEMA.md").unlink()
+    (vault / "raw" / "papers").rmdir()
+    (vault / "50_people").rmdir()
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    issues = {(i["code"], i["path"]) for i in payload["issues"]}
+    assert ("missing_root_file", "SCHEMA.md") in issues
+    assert ("missing_raw_folder", "raw/papers") in issues
+    assert ("missing_cortex_folder", "50_people") in issues
+
+
+def test_wiki_health_reports_curated_source_config_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    raw["vault"]["include_folders"] = ["10_facts", "raw", "00_inbox", "80_templates"]
+    raw["vault"]["exclude_folders"] = []
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    drift_paths = [i["path"] for i in payload["issues"] if i["code"] == "config_curated_source_drift"]
+    assert drift_paths == ["00_inbox", "80_templates", "raw"]
+
+
+def test_wiki_health_reports_empty_include_config_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    raw["vault"]["include_folders"] = []
+    raw["vault"]["exclude_folders"] = ["00_inbox"]
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    drift_paths = [i["path"] for i in payload["issues"] if i["code"] == "config_curated_source_drift"]
+    assert drift_paths == ["80_templates", "raw"]
+
+
+def test_wiki_health_strict_turns_raw_metadata_warnings_nonzero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw_source = tmp_path / "vault" / "raw" / "articles" / "source.md"
+    raw_source.write_text("---\nsource_url: not-a-url\ningested: nope\n---\n\n# Body\n", encoding="utf-8")
+
+    rc_default = main(["wiki-health", "--config", str(cfg), "--json"])
+    payload_default = json.loads(capsys.readouterr().out)
+    rc_strict = main(["wiki-health", "--config", str(cfg), "--json", "--strict"])
+    payload_strict = json.loads(capsys.readouterr().out)
+
+    assert rc_default == 0
+    assert rc_strict == 1
+    warning_codes = {i["code"] for i in payload_default["issues"]}
+    assert {"raw_source_invalid_source_url", "raw_source_invalid_ingested", "raw_source_missing_sha256"} <= warning_codes
+    assert payload_strict["warning_count"] == payload_default["warning_count"]
+
+
+def test_wiki_health_reports_raw_body_sha256_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _setup_wiki_health(tmp_path)
+    raw_source = tmp_path / "vault" / "raw" / "articles" / "source.md"
+    raw_source.write_text(raw_source.read_text(encoding="utf-8") + "mutated\n", encoding="utf-8")
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert ("raw_source_sha256_drift", "raw/articles/source.md") in {
+        (i["code"], i["path"]) for i in payload["issues"]
+    }
+
+
+def test_wiki_health_missing_contract_is_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Missing-contract/error paths must not mutate the vault tree."""
+    cfg = _setup_wiki_health(tmp_path)
+    vault = tmp_path / "vault"
+    (vault / "SCHEMA.md").unlink()
+    (vault / "raw" / "papers").rmdir()
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_wiki_health_sha256_drift_path_is_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Error path for raw body sha256 drift must not mutate the vault tree."""
+    cfg = _setup_wiki_health(tmp_path)
+    raw_source = tmp_path / "vault" / "raw" / "articles" / "source.md"
+    raw_source.write_text(raw_source.read_text(encoding="utf-8") + "mutated\n", encoding="utf-8")
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_wiki_health_log_md_as_directory_is_reported_and_read_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If log.md is a directory (non-file), wiki-health must report it as a
+    missing root file and not mutate the vault tree.
+    """
+    cfg = _setup_wiki_health(tmp_path)
+    vault = tmp_path / "vault"
+    (vault / "log.md").unlink()
+    (vault / "log.md").mkdir()
+    before = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+
+    rc = main(["wiki-health", "--config", str(cfg), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert ("missing_root_file", "log.md") in {(i["code"], i["path"]) for i in payload["issues"]}
+    after = {p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
 
 
 def test_cli_reset_requires_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

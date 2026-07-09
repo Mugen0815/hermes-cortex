@@ -101,6 +101,7 @@ def test_runtime_plugin_cli_uses_full_cortex_parser_surface() -> None:
         "search",
         "search-eval",
         "validate-frontmatter",
+        "wiki-health",
         "context",
         "graph",
         "config",

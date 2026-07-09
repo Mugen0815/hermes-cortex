@@ -211,18 +211,19 @@ def test_install_uses_runtime_cortex_cli(monkeypatch, tmp_path):
             "repeat": {"times": None, "completed": 0},
         }
 
+    configured_vault = tmp_path / "cfg-vault"
     monkeypatch.setattr(
         "cortex.cron._load_cortex_config",
         lambda config_path=None: SimpleNamespace(
             cron=SimpleNamespace(nightly_promotion=CronNightlyPromotionConfig(enabled=True)),
-            vault=SimpleNamespace(path=tmp_path / "cfg-vault"),
+            vault=SimpleNamespace(path=configured_vault),
         ),
     )
     monkeypatch.setattr("cortex.cron._build_job", fake_build_job)
     monkeypatch.setattr("cortex.cron._load_jobs", lambda: {"jobs": []})
     monkeypatch.setattr("cortex.cron._save_jobs", lambda data: None)
 
-    result = install(vault_path=str(tmp_path / "vault"))
+    result = install(vault_path=str(configured_vault))
 
     assert result["action"] == "created"
     assert captured["cortex_bin"] == "hermes cortex"
@@ -240,13 +241,13 @@ def test_install_updates_legacy_job_and_removes_duplicate(monkeypatch):
         "cortex.cron._load_cortex_config",
         lambda config_path=None: SimpleNamespace(
             cron=SimpleNamespace(nightly_promotion=CronNightlyPromotionConfig(enabled=True)),
-            vault=SimpleNamespace(path="/cfg-vault"),
+            vault=SimpleNamespace(path=Path("/cfg-vault")),
         ),
     )
     monkeypatch.setattr("cortex.cron._load_jobs", lambda: {"jobs": [legacy, duplicate]})
     monkeypatch.setattr("cortex.cron._save_jobs", lambda data: saved.update(data))
 
-    result = install(vault_path="/vault")
+    result = install(vault_path=str(Path("/cfg-vault").resolve()))
 
     assert result["action"] == "updated"
     assert result["removed_duplicates"] == 1
@@ -389,12 +390,12 @@ def test_install_disabled_config_skips_creation(monkeypatch):
         "cortex.cron._load_cortex_config",
         lambda config_path=None: SimpleNamespace(
             cron=SimpleNamespace(nightly_promotion=cfg),
-            vault=SimpleNamespace(path="/cfg-vault"),
+            vault=SimpleNamespace(path=Path("/cfg-vault")),
         ),
     )
     monkeypatch.setattr("cortex.cron._save_jobs", lambda data: saved.append(data))
 
-    result = install(vault_path="/vault")
+    result = install(vault_path=str(Path("/cfg-vault").resolve()))
 
     assert result["action"] == "disabled"
     assert result["installed"] is False
@@ -484,7 +485,7 @@ def test_install_weekly_uses_weekly_config(monkeypatch, tmp_path):
     monkeypatch.setattr("cortex.cron._load_jobs", lambda: {"jobs": []})
     monkeypatch.setattr("cortex.cron._save_jobs", lambda data: None)
 
-    result = install(vault_path=str(tmp_path / "vault"), job="weekly")
+    result = install(vault_path=str(tmp_path / "cfg-vault"), job="weekly")
 
     assert result["job"] == "weekly"
     assert result["action"] == "created"
@@ -526,3 +527,127 @@ def test_weekly_status_does_not_collide_with_nightly(monkeypatch):
     assert result["job"] == "weekly"
     assert result["job_id"] == _job_id("custom-weekly")
     assert result["name"] == "custom-weekly"
+
+
+def test_install_nightly_rejects_mismatching_vault(monkeypatch, tmp_path):
+    """cron install --vault MISMATCH must fail without saving jobs."""
+    from cortex.cron import VaultMismatchError
+
+    configured = tmp_path / "configured-vault"
+    other = tmp_path / "other-vault"
+    saved = []
+
+    monkeypatch.setattr(
+        "cortex.cron._load_cortex_config",
+        lambda config_path=None: SimpleNamespace(
+            cron=SimpleNamespace(nightly_promotion=CronNightlyPromotionConfig(enabled=True)),
+            vault=SimpleNamespace(path=configured),
+        ),
+    )
+    monkeypatch.setattr("cortex.cron._save_jobs", lambda data: saved.append(data))
+
+    import pytest as _pytest
+
+    with _pytest.raises(VaultMismatchError):
+        install(vault_path=str(other), job="nightly")
+    assert saved == []
+
+
+def test_install_weekly_rejects_mismatching_vault(monkeypatch, tmp_path):
+    """cron install --job weekly --vault MISMATCH must fail without saving jobs."""
+    from cortex.cron import VaultMismatchError
+
+    configured = tmp_path / "configured-vault"
+    other = tmp_path / "other-vault"
+    saved = []
+
+    monkeypatch.setattr(
+        "cortex.cron._load_cortex_config",
+        lambda config_path=None: SimpleNamespace(
+            cron=SimpleNamespace(
+                nightly_promotion=CronNightlyPromotionConfig(),
+                weekly_review=CronWeeklyReviewConfig(enabled=True),
+            ),
+            vault=SimpleNamespace(path=configured),
+        ),
+    )
+    monkeypatch.setattr("cortex.cron._save_jobs", lambda data: saved.append(data))
+
+    import pytest as _pytest
+
+    with _pytest.raises(VaultMismatchError):
+        install(vault_path=str(other), job="weekly")
+    assert saved == []
+
+
+def test_install_nightly_accepts_matching_vault(monkeypatch, tmp_path):
+    """cron install --vault MATCH (normalized == configured) succeeds."""
+    configured = tmp_path / "configured-vault"
+    saved = []
+
+    monkeypatch.setattr(
+        "cortex.cron._load_cortex_config",
+        lambda config_path=None: SimpleNamespace(
+            cron=SimpleNamespace(nightly_promotion=CronNightlyPromotionConfig(enabled=True)),
+            vault=SimpleNamespace(path=configured),
+        ),
+    )
+    monkeypatch.setattr("cortex.cron._load_jobs", lambda: {"jobs": []})
+    monkeypatch.setattr("cortex.cron._save_jobs", lambda data: saved.append(data))
+
+    result = install(vault_path=str(configured), job="nightly")
+
+    assert result["action"] == "created"
+    assert len(saved) == 1
+
+
+def test_install_nightly_accepts_no_vault_override(monkeypatch, tmp_path):
+    """cron install without --vault succeeds normally."""
+    configured = tmp_path / "configured-vault"
+    saved = []
+
+    monkeypatch.setattr(
+        "cortex.cron._load_cortex_config",
+        lambda config_path=None: SimpleNamespace(
+            cron=SimpleNamespace(nightly_promotion=CronNightlyPromotionConfig(enabled=True)),
+            vault=SimpleNamespace(path=configured),
+        ),
+    )
+    monkeypatch.setattr("cortex.cron._load_jobs", lambda: {"jobs": []})
+    monkeypatch.setattr("cortex.cron._save_jobs", lambda data: saved.append(data))
+
+    result = install(job="nightly")
+
+    assert result["action"] == "created"
+    assert len(saved) == 1
+
+
+def test_cron_install_help_describes_deprecated_compatibility_not_override(capsys):
+    """Regression: ``cron install --vault`` help must not claim an override.
+
+    F1 contract: --vault is deprecated compatibility input that must match the
+    configured ``vault.path``; mismatches are rejected. The old wording
+    ``Override vault path (default: ~/hermes-workspace/vault)`` contradicted the
+    single-Vault contract and must not silently return.
+    """
+    from cortex.cli import configure_parser
+
+    import argparse
+
+    import pytest as _pytest
+
+    parser = argparse.ArgumentParser(prog="cortex")
+    configure_parser(parser)
+
+    # argparse writes subcommand help to stdout and raises SystemExit(0).
+    with _pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(["cron", "install", "--help"])
+    assert excinfo.value.code == 0
+
+    help_text = capsys.readouterr().out
+    assert "Override vault path" not in help_text
+    assert "~/hermes-workspace/vault)" not in help_text
+    help_lower = help_text.lower()
+    assert "deprecated" in help_lower
+    assert "vault.path" in help_lower
+    assert "rejected" in help_lower or "match" in help_lower

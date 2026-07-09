@@ -17,6 +17,7 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass, field
+from datetime import date
 from importlib import resources
 from pathlib import Path
 from typing import Callable, Optional
@@ -71,6 +72,21 @@ VAULT_FOLDERS = [
     "80_templates",
 ]
 
+RAW_FOLDERS = [
+    "raw",
+    "raw/articles",
+    "raw/papers",
+    "raw/transcripts",
+    "raw/assets",
+]
+
+LLM_WIKI_ROOT_FILES = [
+    "SCHEMA.md",
+    "index.md",
+    "log.md",
+    "raw/README.md",
+]
+
 
 # ---- Plan -------------------------------------------------------------------
 
@@ -101,6 +117,8 @@ class InstallPlan:
     dry_run: bool = False
 
     # Filled in during run; informational
+    vault_path_source: str = "default"
+    vault_path_note: str = ""
     actions: list[str] = field(default_factory=list)
 
 
@@ -155,7 +173,9 @@ class Installer:
     def run(self) -> InstallPlan:
         p = self.plan
         self._announce("Setting up hermes-cortex")
+        self._diagnose_path_selection()
         self._setup_vault()
+        self._copy_llm_wiki_root_materials()
         if p.install_templates:
             self._copy_templates()
         if p.install_vault_readme:
@@ -187,6 +207,15 @@ class Installer:
                 gitkeep = sub / ".gitkeep"
                 self._write_text(gitkeep, "")
         self._action(f"Ensured {len(VAULT_FOLDERS)} vault folders exist")
+        for folder in RAW_FOLDERS:
+            sub = vault / folder
+            if not sub.exists():
+                self._mkdir(sub)
+        self._action("Ensured llm-wiki raw folders exist")
+
+    def _copy_llm_wiki_root_materials(self) -> None:
+        for rel in LLM_WIKI_ROOT_FILES:
+            self._copy_text(_render_llm_wiki_seed_file(rel), self.plan.vault_path / rel)
 
     def _copy_templates(self) -> None:
         target_dir = self.plan.vault_path / "80_templates"
@@ -213,7 +242,13 @@ class Installer:
     def _write_config(self) -> None:
         cfg = self.plan.config_path
         content = self._render_config()
+        existed = cfg.exists()
         self._copy_text(content, cfg)
+        if existed and self.plan.overwrite_policy == "skip":
+            self._action(
+                "Config write skipped by overwrite policy; planned vault.path "
+                f"{self.plan.vault_path} was not persisted because existing config was preserved"
+            )
 
     def _update_hermes_memory_coordinates(self) -> None:
         mem = self.plan.hermes_memory_path
@@ -366,6 +401,11 @@ class Installer:
             self.prompt.info("")
             self.prompt.info("Next: run `cortex index`, `cortex embed`, then `cortex graph build`.")
 
+    def _diagnose_path_selection(self) -> None:
+        self._action(f"Vault path default: {self.plan.vault_path} (source: {self.plan.vault_path_source})")
+        if self.plan.vault_path_note:
+            self._action(self.plan.vault_path_note)
+
     # ---- File helpers (dry-run aware, overwrite policy aware) --------------
 
     def _mkdir(self, path: Path) -> None:
@@ -437,7 +477,7 @@ class Installer:
 vault:
   path: {p.vault_path}
   include_folders: [10_facts, 20_decisions, 30_projects, 40_runbooks, 50_people, 60_maps]
-  exclude_folders: [00_inbox, 80_templates]
+  exclude_folders: [00_inbox, 80_templates, raw]
 
 {hermes_block}
 
@@ -543,6 +583,151 @@ logging:
 """
 
 
+def resolve_init_vault_path(config_path: Path, explicit_vault: str | Path | None = None) -> tuple[Path, str, str]:
+    """Resolve the init-time vault path without changing runtime config semantics.
+
+    Precedence: explicit operator path > existing config vault.path > WIKI_PATH > default.
+    WIKI_PATH is accepted only here as init/default input. Runtime config loading
+    remains based on vault.path.
+    """
+    if explicit_vault:
+        return Path(explicit_vault).expanduser().resolve(), "explicit", ""
+
+    wiki_path = os.environ.get("WIKI_PATH", "").strip()
+    cfg = Path(config_path).expanduser().resolve()
+    if cfg.exists():
+        existing = _read_existing_vault_path(cfg)
+        if existing is not None:
+            note = ""
+            if wiki_path:
+                wiki = Path(wiki_path).expanduser().resolve()
+                if wiki != existing:
+                    note = (
+                        f"Existing config vault.path retained over WIKI_PATH={wiki}; "
+                        "use --vault or overwrite config explicitly to change it"
+                    )
+            return existing, "existing config", note
+
+    if wiki_path:
+        return Path(wiki_path).expanduser().resolve(), "WIKI_PATH", ""
+    return DEFAULT_VAULT_PATH, "default", ""
+
+
+def _read_existing_vault_path(config_path: Path) -> Optional[Path]:
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    vault = raw.get("vault") or {}
+    if not isinstance(vault, dict) or not vault.get("path"):
+        return None
+    return Path(str(vault["path"])).expanduser().resolve()
+
+
+def _render_llm_wiki_seed_file(rel: str) -> str:
+    today = date.today().isoformat()
+    if rel == "SCHEMA.md":
+        return f"""---
+type: note
+status: active
+domain: cortex
+tags: [cortex, llm-wiki, schema]
+confidence: high
+importance: medium
+stability: evolving
+created: {today}
+last_verified: {today}
+---
+
+# Vault Schema
+
+This Vault is a single Cortex-managed llm-wiki-compatible knowledge root. Cortex config `vault.path` is the canonical runtime coordinate.
+
+## Note conventions
+
+Use Cortex-compatible frontmatter for curated notes: `type`, `status`, `tags`, `confidence`, `importance`, and `stability`. Prefer accepted types such as `fact`, `decision`, `project`, `runbook`, `person`, `map`, or `note`.
+
+## Provenance
+
+Keep original source material under `raw/` and write curated facts, decisions, projects, runbooks, people, and maps into the curated folders. Raw files should preserve source provenance such as `source_url`, `ingested`, and `sha256` when available.
+
+## Raw-source rule
+
+Treat `raw/` as source material: do not rewrite or silently promote it into curated answers. Curate derived knowledge into the standard Cortex folders instead.
+"""
+    if rel == "index.md":
+        return f"""---
+type: map
+status: active
+domain: cortex
+tags: [cortex, llm-wiki, index]
+confidence: medium
+importance: medium
+stability: evolving
+created: {today}
+last_verified: {today}
+---
+
+# Vault Index
+
+Starter map for this Cortex Vault. Add links to durable curated maps, facts, projects, decisions, runbooks, and people as the Vault grows.
+
+## Curated areas
+
+- `10_facts/` — durable factual notes
+- `20_decisions/` — decision records
+- `30_projects/` — project dossiers
+- `40_runbooks/` — operational procedures
+- `50_people/` — people/contact context
+- `60_maps/` — maps of content
+
+## Source and staging areas
+
+- `00_inbox/` — uncurated candidates
+- `80_templates/` — scaffolding
+- `raw/` — immutable/raw source material
+"""
+    if rel == "log.md":
+        return f"""---
+type: note
+status: active
+domain: cortex
+tags: [cortex, llm-wiki, log]
+confidence: medium
+importance: low
+stability: evolving
+created: {today}
+last_verified: {today}
+---
+
+# Vault Log
+
+Append-only operator history for this Vault. This file is orientation history, not scheduler or application state.
+
+- {today}: Vault seed created by `cortex init`.
+"""
+    if rel == "raw/README.md":
+        return """# Raw source material
+
+Store original articles, papers, transcripts, and assets here. Raw files are provenance/source material, not curated answer notes by default.
+
+Recommended optional metadata for raw Markdown sources:
+
+```yaml
+---
+source_url: https://example.invalid/source
+ingested: 2026-01-01
+sha256: <body-only-or-source-hash>
+---
+```
+
+Prefer preserving raw content and curating derived facts or decisions into the standard Cortex folders.
+"""
+    raise ValueError(f"unknown llm-wiki seed file: {rel}")
+
+
 def _render_updated_hermes_memory(content: str, vault_path: Path) -> str:
     """Patch Hermes MEMORY.md coordinates without overwriting unrelated memory."""
     vault = str(vault_path)
@@ -604,7 +789,12 @@ def _runtime_insert_index(lines: list[str]) -> int:
 # ---- Interactive plan builder -----------------------------------------------
 
 
-def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
+def build_plan_interactively(
+    prompt: Optional[Prompt] = None,
+    *,
+    config_path: str | Path | None = None,
+    explicit_vault: str | Path | None = None,
+) -> InstallPlan:
     """Walk the user through the plan. Returns an InstallPlan ready to execute."""
     p = prompt or Prompt()
     plan = InstallPlan()
@@ -614,8 +804,22 @@ def build_plan_interactively(prompt: Optional[Prompt] = None) -> InstallPlan:
     p.info("This will set up your vault, templates, and config.")
     p.info("")
 
-    plan.vault_path = Path(p.ask("Vault path", str(DEFAULT_VAULT_PATH))).expanduser().resolve()
-    plan.config_path = Path(p.ask("Config file path", str(DEFAULT_CONFIG_PATH))).expanduser().resolve()
+    if config_path is None:
+        chosen_config = p.ask("Config file path", str(DEFAULT_CONFIG_PATH))
+        plan.config_path = Path(chosen_config).expanduser().resolve()
+    else:
+        plan.config_path = Path(config_path).expanduser().resolve()
+
+    default_vault, source, note = resolve_init_vault_path(plan.config_path, explicit_vault)
+    if explicit_vault is None:
+        chosen_vault = p.ask("Vault path", str(default_vault))
+        plan.vault_path = Path(chosen_vault).expanduser().resolve()
+        plan.vault_path_source = source if plan.vault_path == default_vault else "interactive"
+        plan.vault_path_note = note if plan.vault_path == default_vault else ""
+    else:
+        plan.vault_path = default_vault
+        plan.vault_path_source = source
+        plan.vault_path_note = note
 
     plan.install_templates = p.confirm("Install note templates (80_templates/)?", default=True)
     plan.install_seed_notes = p.confirm("Install seed notes (Map of Content + basic facts)?", default=True)

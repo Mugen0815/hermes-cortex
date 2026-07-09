@@ -78,13 +78,12 @@ Fresh init is idempotent and does not mutate `SOUL.md`, `MEMORY.md`, or
 
 Cortex has exactly one durable runtime Vault source of truth: `vault.path` in the
 active Cortex config. During `init`, an explicit `--vault` path selects the Vault
-for fresh config creation or interactive overwrite; otherwise an existing config
-wins; only then may `WIKI_PATH` seed the initial `vault.path` for new/unconfigured
-installs. Non-interactive `init --yes` with an existing config fails before seed
-writes if the config has no readable `vault.path`, or if an explicit `--vault NEW`
-does not match it, so the preserved config cannot diverge from a newly seeded
-Vault. Runtime commands, hooks, search, indexing, and lifecycle operations use the
-configured `vault.path`, not `WIKI_PATH`, `wiki.path`, or a fallback wiki directory.
+for fresh config creation or a forced interactive overwrite; otherwise an existing
+config wins; only then may `WIKI_PATH` seed the initial `vault.path` for new or
+otherwise unconfigured installs. Any init plan that would preserve an unreadable
+config or a different configured `vault.path` fails before seed writes. Runtime
+commands, hooks, search, indexing, and lifecycle operations use the configured
+`vault.path`, not `WIKI_PATH`, `wiki.path`, or a fallback wiki directory.
 
 Fresh Vaults also include llm-wiki-compatible root/orientation material in that
 same Vault root: `SCHEMA.md`, `index.md`, `log.md`, and `raw/{articles,papers,transcripts,assets}`.

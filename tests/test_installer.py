@@ -91,6 +91,80 @@ def test_run_creates_vault_skeleton(plan: InstallPlan) -> None:
         assert (plan.vault_path / rel).exists()
 
 
+@pytest.mark.parametrize(
+    ("overwrite_policy", "prompt_answers"),
+    [("skip", []), ("ask", ["n"])],
+)
+def test_run_rejects_mismatching_existing_config_before_seed_when_not_forced(
+    tmp_path: Path,
+    overwrite_policy: str,
+    prompt_answers: list[str],
+) -> None:
+    old_vault = tmp_path / "old-vault"
+    new_vault = tmp_path / "new-vault"
+    config = tmp_path / "config.yaml"
+    config.write_text(f"vault:\n  path: {old_vault}\n", encoding="utf-8")
+    before = config.read_text(encoding="utf-8")
+    plan = InstallPlan(
+        vault_path=new_vault,
+        config_path=config,
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=None,
+        overwrite_policy=overwrite_policy,
+    )
+
+    with pytest.raises(ValueError, match="Refusing to seed"):
+        Installer(plan, prompt=FakePrompt(prompt_answers)).run()
+
+    assert not new_vault.exists()
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_run_rejects_unreadable_existing_config_before_seed_when_not_forced(
+    tmp_path: Path,
+) -> None:
+    new_vault = tmp_path / "new-vault"
+    config = tmp_path / "config.yaml"
+    config.write_text("vault: [\n", encoding="utf-8")
+    before = config.read_text(encoding="utf-8")
+    plan = InstallPlan(
+        vault_path=new_vault,
+        config_path=config,
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=None,
+        overwrite_policy="skip",
+    )
+
+    with pytest.raises(ValueError, match="does not contain a readable vault.path"):
+        Installer(plan, prompt=FakePrompt([])).run()
+
+    assert not new_vault.exists()
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_install_plan_defaults_to_active_profile_cortex_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile_home = tmp_path / "profile-home"
+    monkeypatch.setenv("HERMES_HOME", str(profile_home))
+
+    plan = InstallPlan()
+
+    assert plan.config_path == profile_home / "cortex" / "config.yaml"
+    assert plan.chunks_path == profile_home / "cortex" / "chunks.jsonl"
+    assert plan.chroma_path == profile_home / "cortex" / "chroma"
+    assert plan.hermes_memory_path == profile_home / "memories" / "MEMORY.md"
+    assert plan.hermes_user_path == profile_home / "memories" / "USER.md"
+    assert plan.hermes_soul_path == profile_home / "SOUL.md"
+
+
 def test_llm_wiki_root_files_are_preserved_by_skip_policy(plan: InstallPlan) -> None:
     Installer(plan, prompt=FakePrompt([])).run()
     root_file = plan.vault_path / "SCHEMA.md"

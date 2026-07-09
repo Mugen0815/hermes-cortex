@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from cortex.cli import main
+from cortex.installer import InstallPlan
 
 
 CONFIG_TEMPLATE = dedent("""\
@@ -314,6 +315,66 @@ def test_cli_init_yes_explicit_vault_fresh_config_succeeds(
     assert (new_vault / "SCHEMA.md").exists()
     raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
     assert raw["vault"]["path"] == str(new_vault.resolve())
+
+
+def test_cli_init_yes_without_config_uses_active_profile_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    profile_home = _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "profile-vault"
+    new_vault = tmp_path / "new-vault"
+    profile_config = profile_home / "cortex" / "config.yaml"
+    profile_config.parent.mkdir()
+    profile_config.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["init", "--yes", "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert str(profile_config.resolve()) in err
+    assert not new_vault.exists()
+
+
+def test_cli_init_interactive_mismatch_returns_two_before_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    old_vault = tmp_path / "old-vault"
+    new_vault = tmp_path / "new-vault"
+    config = tmp_path / "config.yaml"
+    config.write_text(f"vault:\n  path: {old_vault}\n", encoding="utf-8")
+    plan = InstallPlan(
+        vault_path=new_vault,
+        config_path=config,
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=None,
+        overwrite_policy="skip",
+    )
+    monkeypatch.setattr(
+        "cortex.cli.build_plan_interactively",
+        lambda config_path=None, explicit_vault=None: plan,
+    )
+
+    rc = main(["init", "--config", str(config), "--vault", str(new_vault)])
+
+    assert rc == 2
+    assert "Refusing to seed" in capsys.readouterr().err
+    assert not new_vault.exists()
+
 
 def test_config_show_legacy_context_label_depends_on_semantic_presence(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

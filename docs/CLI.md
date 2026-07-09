@@ -52,7 +52,7 @@ Options:
 |---|---|
 | `--yes`, `-y` | Non-interactive, accept defaults |
 | `--dry-run` | Show actions without writing files |
-| `--vault PATH` | Select the Vault path during init. With an existing config, non-interactive `--yes` refuses to seed when `vault.path` is unreadable/missing or a supplied `--vault` does not match it. |
+| `--vault PATH` | Select the Vault path during init. With an existing config, init refuses to seed when `vault.path` is unreadable/missing or the selected Vault differs unless the interactive overwrite policy is `force`. |
 | `--config PATH` | Override config path |
 | `--legacy-update-hermes-memory` | Opt in to updating Hermes `MEMORY.md` vault coordinates |
 | `--legacy-update-soul-memory-rules` | Opt in to patching `SOUL.md` with Cortex memory rules |
@@ -71,11 +71,12 @@ After init, commands such as `index`, `embed`, `search`, hooks, and lifecycle us
 configured `vault.path`. They do not fall back to `WIKI_PATH`, `wiki.path`, or a
 second wiki directory.
 
-For non-interactive runs, Cortex refuses split-brain init state. `init --yes`
-with an existing config fails before seed writes when the config has no readable
-`vault.path`, or when an explicit `--vault NEW` differs from the configured path
-and the config update would be skipped. Re-run interactively to choose an
-overwrite policy, or fix/remove the config before retrying.
+Cortex refuses split-brain init state before any seed writes. With an existing
+config, `init --yes` and the interactive `skip`/`ask` policies fail when the config
+has no readable `vault.path` or the selected Vault differs from it. Re-run
+interactively with the `force` overwrite policy, or fix/remove the config before
+retrying. Without an explicit `--config`, init uses the active profile's
+`$HERMES_HOME/cortex/config.yaml`, matching runtime config discovery.
 
 ## Index
 
@@ -375,7 +376,7 @@ Options:
 
 | Command | Option | Meaning |
 |---|---|---|
-| `install` | `--config PATH` | Use an explicit Cortex config file |
+| `install` | `--config PATH` | Use an explicit Cortex config file. The installed lifecycle commands retain this exact config path so prompt writes and runtime operations cannot resolve different Vaults. |
 | `install` | `--job nightly|weekly|all` | Job to install; default `nightly` |
 | `install` | `--vault PATH` | Deprecated compatibility only; must match configured `vault.path` after normalization. Mismatching values are rejected before job build/save. The Cortex config `vault.path` is the single source of truth. |
 | `uninstall` | `--config PATH` | Use an explicit Cortex config file |

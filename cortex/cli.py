@@ -43,14 +43,15 @@ from cortex.cli_helpers import (
     resolve_config,
 )
 from cortex.installer import (
-    DEFAULT_CONFIG_PATH,
-    DEFAULT_HERMES_MEMORY,
-    DEFAULT_HERMES_SOUL,
-    DEFAULT_HERMES_USER,
+    ConfigPersistenceError,
     InstallPlan,
     Installer,
     _read_existing_vault_path,
     build_plan_interactively,
+    default_config_path,
+    default_hermes_memory_path,
+    default_hermes_soul_path,
+    default_hermes_user_path,
     resolve_init_vault_path,
 )
 
@@ -93,17 +94,20 @@ def _validate_yes_vault_path(config_path: Path, resolved_vault: Path, explicit_v
 
 def _cmd_init(args: argparse.Namespace) -> int:
     if args.yes:
-        config_path = Path(args.config).expanduser().resolve() if args.config else DEFAULT_CONFIG_PATH
+        config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path()
         vault_path, vault_source, vault_note = resolve_init_vault_path(config_path, args.vault)
         rc = _validate_yes_vault_path(config_path, vault_path, args.vault)
         if rc != 0:
             return rc
+        memory_path = default_hermes_memory_path()
+        user_path = default_hermes_user_path()
+        soul_path = default_hermes_soul_path()
         plan = InstallPlan(
             vault_path=vault_path,
             config_path=config_path,
-            hermes_memory_path=DEFAULT_HERMES_MEMORY if DEFAULT_HERMES_MEMORY.exists() else None,
-            hermes_user_path=DEFAULT_HERMES_USER if DEFAULT_HERMES_USER.exists() else None,
-            hermes_soul_path=DEFAULT_HERMES_SOUL if DEFAULT_HERMES_SOUL.exists() else None,
+            hermes_memory_path=memory_path if memory_path.exists() else None,
+            hermes_user_path=user_path if user_path.exists() else None,
+            hermes_soul_path=soul_path if soul_path.exists() else None,
             update_hermes_memory=args.legacy_update_hermes_memory,
             update_hermes_soul_memory_rules=args.legacy_update_soul_memory_rules,
             overwrite_policy="skip",
@@ -115,7 +119,10 @@ def _cmd_init(args: argparse.Namespace) -> int:
         plan = build_plan_interactively(config_path=args.config, explicit_vault=args.vault)
         plan.dry_run = args.dry_run
 
-    Installer(plan).run()
+    try:
+        Installer(plan).run()
+    except ConfigPersistenceError as exc:
+        return print_error(f"  \u2717 {exc}", exit_code=2)
     return 0
 
 

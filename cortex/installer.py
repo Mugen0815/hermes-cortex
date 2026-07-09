@@ -24,18 +24,6 @@ from typing import Callable, Optional
 
 import yaml
 
-# ---- Default install targets ------------------------------------------------
-
-DEFAULT_VAULT_PATH = Path.home() / "hermes-workspace" / "vault"
-DEFAULT_CONFIG_PATH = Path.home() / ".hermes" / "cortex" / "config.yaml"
-DEFAULT_CHUNKS_PATH = Path.home() / ".hermes" / "cortex" / "chunks.jsonl"
-DEFAULT_CHROMA_PATH = Path.home() / ".hermes" / "cortex" / "chroma"
-
-DEFAULT_HERMES_MEMORY = Path.home() / ".hermes" / "memories" / "MEMORY.md"
-DEFAULT_HERMES_USER = Path.home() / ".hermes" / "memories" / "USER.md"
-DEFAULT_HERMES_SOUL = Path.home() / ".hermes" / "SOUL.md"
-
-
 def _hermes_home() -> Path:
     """Return the Hermes home for the current process/profile."""
     try:
@@ -44,6 +32,43 @@ def _hermes_home() -> Path:
         return Path(get_hermes_home()).expanduser()
     except Exception:
         return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")).expanduser()
+
+
+# ---- Default install targets ------------------------------------------------
+
+
+def default_config_path() -> Path:
+    return (_hermes_home() / "cortex" / "config.yaml").resolve()
+
+
+def default_chunks_path() -> Path:
+    return (_hermes_home() / "cortex" / "chunks.jsonl").resolve()
+
+
+def default_chroma_path() -> Path:
+    return (_hermes_home() / "cortex" / "chroma").resolve()
+
+
+def default_hermes_memory_path() -> Path:
+    return (_hermes_home() / "memories" / "MEMORY.md").resolve()
+
+
+def default_hermes_user_path() -> Path:
+    return (_hermes_home() / "memories" / "USER.md").resolve()
+
+
+def default_hermes_soul_path() -> Path:
+    return (_hermes_home() / "SOUL.md").resolve()
+
+
+DEFAULT_VAULT_PATH = Path.home() / "hermes-workspace" / "vault"
+DEFAULT_CONFIG_PATH = default_config_path()
+DEFAULT_CHUNKS_PATH = default_chunks_path()
+DEFAULT_CHROMA_PATH = default_chroma_path()
+
+DEFAULT_HERMES_MEMORY = default_hermes_memory_path()
+DEFAULT_HERMES_USER = default_hermes_user_path()
+DEFAULT_HERMES_SOUL = default_hermes_soul_path()
 
 
 def _unique_strings(values: object) -> list[str]:
@@ -96,17 +121,17 @@ class InstallPlan:
     """Resolved install configuration. Pure data — no side effects."""
 
     vault_path: Path = DEFAULT_VAULT_PATH
-    config_path: Path = DEFAULT_CONFIG_PATH
-    chunks_path: Path = DEFAULT_CHUNKS_PATH
-    chroma_path: Path = DEFAULT_CHROMA_PATH
+    config_path: Path = field(default_factory=default_config_path)
+    chunks_path: Path = field(default_factory=default_chunks_path)
+    chroma_path: Path = field(default_factory=default_chroma_path)
 
     install_templates: bool = True
     install_seed_notes: bool = True
     install_vault_readme: bool = True
 
-    hermes_memory_path: Optional[Path] = DEFAULT_HERMES_MEMORY
-    hermes_user_path: Optional[Path] = DEFAULT_HERMES_USER
-    hermes_soul_path: Optional[Path] = DEFAULT_HERMES_SOUL
+    hermes_memory_path: Optional[Path] = field(default_factory=default_hermes_memory_path)
+    hermes_user_path: Optional[Path] = field(default_factory=default_hermes_user_path)
+    hermes_soul_path: Optional[Path] = field(default_factory=default_hermes_soul_path)
     # Legacy Markdown mutation is explicit opt-in only. The paths above are
     # config/context coordinates; their presence must not imply write access to
     # Hermes' Markdown memory files.
@@ -158,6 +183,10 @@ class Prompt:
             self._write(f"  Please answer one of: {', '.join(options)}")
 
 
+class ConfigPersistenceError(ValueError):
+    """Raised before seeding when the selected Vault cannot become canonical."""
+
+
 # ---- Installer --------------------------------------------------------------
 
 
@@ -172,6 +201,7 @@ class Installer:
 
     def run(self) -> InstallPlan:
         p = self.plan
+        self._validate_config_persistence()
         self._announce("Setting up hermes-cortex")
         self._diagnose_path_selection()
         self._setup_vault()
@@ -190,6 +220,29 @@ class Installer:
         self._enable_cortex_toolset()
         self._summary()
         return p
+
+    def _validate_config_persistence(self) -> None:
+        """Reject plans that can seed a Vault while preserving another config."""
+        p = self.plan
+        config_path = p.config_path.expanduser().resolve()
+        selected_vault = p.vault_path.expanduser().resolve()
+        if not config_path.exists() or p.overwrite_policy == "force":
+            return
+
+        existing_vault = _read_existing_vault_path(config_path)
+        if existing_vault is None:
+            raise ConfigPersistenceError(
+                f"Refusing to seed {selected_vault}: existing config {config_path} "
+                "does not contain a readable vault.path and overwrite policy "
+                f"{p.overwrite_policy!r} will preserve it. Fix/remove the config or use force."
+            )
+        if existing_vault != selected_vault:
+            raise ConfigPersistenceError(
+                f"Refusing to seed {selected_vault}: existing config {config_path} "
+                f"points at {existing_vault} and overwrite policy {p.overwrite_policy!r} "
+                "does not guarantee that the selected Vault becomes canonical. "
+                "Use force or update the config first."
+            )
 
     # ---- Steps -------------------------------------------------------------
 
@@ -805,7 +858,7 @@ def build_plan_interactively(
     p.info("")
 
     if config_path is None:
-        chosen_config = p.ask("Config file path", str(DEFAULT_CONFIG_PATH))
+        chosen_config = p.ask("Config file path", str(default_config_path()))
         plan.config_path = Path(chosen_config).expanduser().resolve()
     else:
         plan.config_path = Path(config_path).expanduser().resolve()
@@ -827,19 +880,22 @@ def build_plan_interactively(
 
     p.info("")
     p.info("Hermes memory files:")
+    default_memory = default_hermes_memory_path()
+    default_user = default_hermes_user_path()
+    default_soul = default_hermes_soul_path()
     if p.confirm("  Auto-detect from default Hermes paths?", default=True):
-        plan.hermes_memory_path = DEFAULT_HERMES_MEMORY if DEFAULT_HERMES_MEMORY.exists() else None
-        plan.hermes_user_path = DEFAULT_HERMES_USER if DEFAULT_HERMES_USER.exists() else None
-        plan.hermes_soul_path = DEFAULT_HERMES_SOUL if DEFAULT_HERMES_SOUL.exists() else None
+        plan.hermes_memory_path = default_memory if default_memory.exists() else None
+        plan.hermes_user_path = default_user if default_user.exists() else None
+        plan.hermes_soul_path = default_soul if default_soul.exists() else None
         for label, path in [("MEMORY.md", plan.hermes_memory_path),
                             ("USER.md", plan.hermes_user_path),
                             ("SOUL.md", plan.hermes_soul_path)]:
             mark = "✓" if path else "—"
             p.info(f"    {mark} {label}: {path or '(not found, skipped)'}")
     else:
-        plan.hermes_memory_path = _ask_optional_path(p, "  MEMORY.md path (blank to skip)", DEFAULT_HERMES_MEMORY)
-        plan.hermes_user_path = _ask_optional_path(p, "  USER.md path (blank to skip)", DEFAULT_HERMES_USER)
-        plan.hermes_soul_path = _ask_optional_path(p, "  SOUL.md path (blank to skip)", DEFAULT_HERMES_SOUL)
+        plan.hermes_memory_path = _ask_optional_path(p, "  MEMORY.md path (blank to skip)", default_memory)
+        plan.hermes_user_path = _ask_optional_path(p, "  USER.md path (blank to skip)", default_user)
+        plan.hermes_soul_path = _ask_optional_path(p, "  SOUL.md path (blank to skip)", default_soul)
 
     p.info("")
     plan.update_hermes_memory = p.confirm(

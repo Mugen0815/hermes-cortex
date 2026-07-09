@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import copy
+import os
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 from types import SimpleNamespace
 
 from cortex.config import CronNightlyPromotionConfig, CronWeeklyReviewConfig
@@ -50,6 +55,22 @@ def test_config_example_defaults_do_not_mention_signal():
     config_example = Path(__file__).resolve().parents[1] / "config.example.yaml"
 
     assert "Signal" not in config_example.read_text(encoding="utf-8")
+
+
+def test_cron_home_resolution_respects_hermes_home_in_subprocess(tmp_path):
+    profile_home = tmp_path / "profile-home"
+    env = os.environ.copy()
+    env["HERMES_HOME"] = str(profile_home)
+    result = subprocess.run(
+        [sys.executable, "-c", "from cortex.cron import _HERMES_HOME; print(_HERMES_HOME)"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == str(profile_home)
 
 
 def test_nightly_prompt_uses_canonical_first_and_review_only_inbox_contract():
@@ -195,11 +216,18 @@ def test_session_source_command_includes_state_db_and_legacy_controls():
 def test_install_uses_runtime_cortex_cli(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_build_job(vault_path, cortex_repo, cortex_bin, cron_config=None):
+    def fake_build_job(
+        vault_path,
+        cortex_repo,
+        cortex_bin,
+        cron_config=None,
+        config_path=None,
+    ):
         captured["vault_path"] = str(vault_path)
         captured["cortex_repo"] = str(cortex_repo)
         captured["cortex_bin"] = str(cortex_bin)
         captured["cron_config"] = cron_config
+        captured["config_path"] = config_path
         return {
             "id": "test-job",
             "name": "hermes-cortex-nightly-promotion",
@@ -230,6 +258,37 @@ def test_install_uses_runtime_cortex_cli(monkeypatch, tmp_path):
     assert captured["cortex_repo"]
     assert not captured["cortex_bin"].startswith("/private/dev/hermes-cortex")
     assert captured["cron_config"].deliver == "origin"
+
+
+def test_install_preserves_custom_config_in_nightly_and_weekly_lifecycle_commands(
+    monkeypatch,
+    tmp_path,
+):
+    custom_config = (tmp_path / "custom config.yaml").resolve()
+    configured_vault = tmp_path / "configured-vault"
+    cfg = SimpleNamespace(
+        source_path=custom_config,
+        vault=SimpleNamespace(path=configured_vault),
+        cron=SimpleNamespace(
+            nightly_promotion=CronNightlyPromotionConfig(enabled=True),
+            weekly_review=CronWeeklyReviewConfig(enabled=True),
+        ),
+    )
+    store = {"jobs": []}
+
+    monkeypatch.setattr("cortex.cron._load_cortex_config", lambda config_path=None: cfg)
+    monkeypatch.setattr("cortex.cron._load_jobs", lambda: copy.deepcopy(store))
+    monkeypatch.setattr("cortex.cron._save_jobs", lambda data: store.update(copy.deepcopy(data)))
+
+    install(config_path=custom_config, job="all")
+
+    expected_flag = f"--config {shlex.quote(str(custom_config))}"
+    prompts = {job["name"]: job["prompt"] for job in store["jobs"]}
+    assert expected_flag in prompts["hermes-cortex-nightly-promotion"]
+    assert expected_flag in prompts["hermes-cortex-weekly-review"]
+    assert f"lifecycle {expected_flag} nightly --write" in prompts["hermes-cortex-nightly-promotion"]
+    assert f"lifecycle {expected_flag} maintenance" in prompts["hermes-cortex-nightly-promotion"]
+    assert f"lifecycle {expected_flag} weekly" in prompts["hermes-cortex-weekly-review"]
 
 
 def test_install_updates_legacy_job_and_removes_duplicate(monkeypatch):
@@ -456,10 +515,17 @@ def test_install_weekly_uses_weekly_config(monkeypatch, tmp_path):
     captured = {}
     weekly_cfg = CronWeeklyReviewConfig(enabled=True, name="custom-weekly", dry_run=False)
 
-    def fake_build_weekly_job(vault_path, cortex_repo, cortex_bin, cron_config=None):
+    def fake_build_weekly_job(
+        vault_path,
+        cortex_repo,
+        cortex_bin,
+        cron_config=None,
+        config_path=None,
+    ):
         captured["vault_path"] = str(vault_path)
         captured["cortex_bin"] = str(cortex_bin)
         captured["cron_config"] = cron_config
+        captured["config_path"] = config_path
         return {
             "id": "weekly-job",
             "name": "custom-weekly",

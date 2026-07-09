@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shlex
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,9 +22,11 @@ log = logging.getLogger("cortex.cron")
 try:
     from hermes_constants import get_hermes_home as _get_hermes_home
 
-    _HERMES_HOME = _get_hermes_home()
+    _HERMES_HOME = Path(_get_hermes_home()).expanduser()
 except ImportError:
-    _HERMES_HOME = Path.home() / ".hermes"
+    _HERMES_HOME = Path(
+        os.environ.get("HERMES_HOME", Path.home() / ".hermes")
+    ).expanduser()
 _CRON_DIR = _HERMES_HOME / "cron"
 _JOBS_FILE = _CRON_DIR / "jobs.json"
 
@@ -78,22 +81,37 @@ def _session_source_command(cfg: CronNightlyPromotionConfig) -> str:
     return " \\\n  ".join(parts)
 
 
-def _lifecycle_commands(cortex_bin: str, dry_run_first: bool) -> str:
+def _lifecycle_prefix(cortex_bin: str, config_path: str | Path | None = None) -> str:
+    prefix = f"{cortex_bin} lifecycle"
+    if config_path is not None:
+        prefix += f" --config {shlex.quote(str(Path(config_path).expanduser().resolve()))}"
+    return prefix
+
+
+def _lifecycle_commands(
+    cortex_bin: str,
+    dry_run_first: bool,
+    config_path: str | Path | None = None,
+) -> str:
+    prefix = _lifecycle_prefix(cortex_bin, config_path)
     commands = []
     if dry_run_first:
-        commands.append(f"{cortex_bin} lifecycle nightly --dry-run")
+        commands.append(f"{prefix} nightly --dry-run")
     commands.extend([
-        f"{cortex_bin} lifecycle nightly --write",
-        f"{cortex_bin} lifecycle maintenance",
+        f"{prefix} nightly --write",
+        f"{prefix} maintenance",
     ])
     return " && \\\n   ".join(commands)
 
 
 
-def _weekly_lifecycle_command(cortex_bin: str, cfg: CronWeeklyReviewConfig) -> str:
+def _weekly_lifecycle_command(
+    cortex_bin: str,
+    cfg: CronWeeklyReviewConfig,
+    config_path: str | Path | None = None,
+) -> str:
     parts = [
-        cortex_bin,
-        "lifecycle",
+        _lifecycle_prefix(cortex_bin, config_path),
         "weekly",
     ]
     if cfg.dry_run:
@@ -114,9 +132,10 @@ def _build_weekly_job(
     cortex_repo: str,
     cortex_bin: str,
     cron_config: CronWeeklyReviewConfig | None = None,
+    config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     cfg = cron_config or CronWeeklyReviewConfig()
-    command = _weekly_lifecycle_command(cortex_bin, cfg)
+    command = _weekly_lifecycle_command(cortex_bin, cfg, config_path)
     prompt = _WEEKLY_PROMPT.format(
         vault_path=str(vault_path),
         cortex_repo=str(cortex_repo),
@@ -163,6 +182,7 @@ def _build_weekly_job(
             "cortex": {
                 "job_type": "weekly_review",
                 "repo": str(cortex_repo),
+                "config_path": str(config_path) if config_path is not None else None,
                 "command": command,
                 "timezone": cfg.timezone,
                 "timezone_scope": "prompt/report only; schedule timezone follows Hermes scheduler runtime config",
@@ -182,6 +202,7 @@ def _build_job(
     cortex_repo: str,
     cortex_bin: str,
     cron_config: CronNightlyPromotionConfig | None = None,
+    config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     cfg = cron_config or CronNightlyPromotionConfig()
     prompt = _NIGHTLY_PROMPT.format(
@@ -194,7 +215,7 @@ def _build_job(
         legacy_fallback_enabled=cfg.legacy_fallback_enabled,
         session_globs_block=_session_globs_block(cfg.session_globs),
         session_source_command=_session_source_command(cfg),
-        lifecycle_commands=_lifecycle_commands(cortex_bin, cfg.dry_run_first),
+        lifecycle_commands=_lifecycle_commands(cortex_bin, cfg.dry_run_first, config_path),
     )
     job_id = _job_id(cfg.name)
     return {
@@ -229,6 +250,7 @@ def _build_job(
             "managed_by": "hermes-cortex",
             "cortex": {
                 "repo": str(cortex_repo),
+                "config_path": str(config_path) if config_path is not None else None,
                 "lookback_days": cfg.lookback_days,
                 "session_source": {
                     "state_db_path": cfg.state_db_path,
@@ -344,7 +366,11 @@ def _normalize_job(job: str) -> JobSelector:
 # ---------------------------------------------------------------------------
 
 
-def _install_nightly(cortex_cfg: Any, vault_path: str | None = None) -> dict[str, Any]:
+def _install_nightly(
+    cortex_cfg: Any,
+    vault_path: str | None = None,
+    config_path: str | Path | None = None,
+) -> dict[str, Any]:
     cfg = cortex_cfg.cron.nightly_promotion
     job_id = _job_id(cfg.name)
     if not cfg.enabled:
@@ -361,11 +387,15 @@ def _install_nightly(cortex_cfg: Any, vault_path: str | None = None) -> dict[str
     cortex_repo = Path(__file__).resolve().parents[1]
     cortex_bin = "hermes cortex"
 
-    job = _build_job(str(vault), str(cortex_repo), cortex_bin, cfg)
+    job = _build_job(str(vault), str(cortex_repo), cortex_bin, cfg, config_path)
     return _upsert_job(job, cfg, _find_job_indices, job_name="nightly")
 
 
-def _install_weekly(cortex_cfg: Any, vault_path: str | None = None) -> dict[str, Any]:
+def _install_weekly(
+    cortex_cfg: Any,
+    vault_path: str | None = None,
+    config_path: str | Path | None = None,
+) -> dict[str, Any]:
     cfg = cortex_cfg.cron.weekly_review
     job_id = _job_id(cfg.name)
     if not cfg.enabled:
@@ -382,7 +412,7 @@ def _install_weekly(cortex_cfg: Any, vault_path: str | None = None) -> dict[str,
     cortex_repo = Path(__file__).resolve().parents[1]
     cortex_bin = "hermes cortex"
 
-    job = _build_weekly_job(str(vault), str(cortex_repo), cortex_bin, cfg)
+    job = _build_weekly_job(str(vault), str(cortex_repo), cortex_bin, cfg, config_path)
     return _upsert_job(job, cfg, _find_weekly_job_indices, job_name="weekly")
 
 
@@ -454,11 +484,39 @@ def install(
     selected = _normalize_job(job)
     cortex_cfg = _load_cortex_config(config_path)
     resolved_vault = _resolve_vault_override(cortex_cfg, vault_path)
+    source_path = getattr(cortex_cfg, "source_path", None)
+    resolved_config = (
+        Path(source_path).expanduser().resolve()
+        if source_path is not None
+        else (Path(config_path).expanduser().resolve() if config_path is not None else None)
+    )
     if selected == "nightly":
-        return _install_nightly(cortex_cfg, str(resolved_vault) if resolved_vault else None)
+        return _install_nightly(
+            cortex_cfg,
+            str(resolved_vault) if resolved_vault else None,
+            resolved_config,
+        )
     if selected == "weekly":
-        return _install_weekly(cortex_cfg, str(resolved_vault) if resolved_vault else None)
-    return {"action": "multiple", "jobs": [_install_nightly(cortex_cfg, str(resolved_vault) if resolved_vault else None), _install_weekly(cortex_cfg, str(resolved_vault) if resolved_vault else None)]}
+        return _install_weekly(
+            cortex_cfg,
+            str(resolved_vault) if resolved_vault else None,
+            resolved_config,
+        )
+    return {
+        "action": "multiple",
+        "jobs": [
+            _install_nightly(
+                cortex_cfg,
+                str(resolved_vault) if resolved_vault else None,
+                resolved_config,
+            ),
+            _install_weekly(
+                cortex_cfg,
+                str(resolved_vault) if resolved_vault else None,
+                resolved_config,
+            ),
+        ],
+    }
 
 
 def _remove_job(cfg: Any, finder: Any, *, job_name: str) -> dict[str, Any]:

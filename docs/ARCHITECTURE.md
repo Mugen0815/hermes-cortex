@@ -138,7 +138,7 @@ command.
 
 `log.md` is append-only operator/lifecycle history. Maintenance/nightly may append
 compact events when the file already exists; missing or non-file `log.md` is a
-health warning/skip condition rather than runtime-created state.
+wiki-health error and a lifecycle skip condition rather than runtime-created state.
 
 ## Nightly/session promotion
 

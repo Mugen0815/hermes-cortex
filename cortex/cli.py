@@ -46,14 +46,46 @@ from cortex.installer import (
     ConfigPersistenceError,
     InstallPlan,
     Installer,
+    WikiPathAlignment,
     _read_existing_vault_path,
     build_plan_interactively,
     default_config_path,
     default_hermes_memory_path,
     default_hermes_soul_path,
     default_hermes_user_path,
+    evaluate_wiki_path_alignment,
     resolve_init_vault_path,
 )
+
+
+# ---- WIKI_PATH / vault.path alignment gate ---------------------------------
+
+
+def _check_wiki_path_alignment(vault_path: Path, *, hard_fail_unset: bool = False) -> int:
+    """Evaluate WIKI_PATH alignment before Installer.run() side effects.
+
+    Returns 0 to proceed or 2 to abort the init flow.
+
+    * ``hard_fail_unset=False`` (interactive): MISMATCH aborts, UNSET continues
+      with a printed informational message.
+    * ``hard_fail_unset=True`` (``--yes``): both UNSET and MISMATCH abort.
+    """
+    state, guidance = evaluate_wiki_path_alignment(vault_path)
+
+    if state == WikiPathAlignment.MISMATCH or (
+        state == WikiPathAlignment.UNSET and hard_fail_unset
+    ):
+        print(
+            f"  \u2717 WIKI_PATH/vault.path {state} \u2014 aborting before any writes.",
+            file=sys.stderr,
+        )
+        print(f"    {guidance}", file=sys.stderr)
+        return 2
+
+    if state == WikiPathAlignment.UNSET:
+        print(f"  \u2139 {guidance}")
+
+    return 0
 
 
 # ---- init --------------------------------------------------------------------
@@ -118,6 +150,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
     else:
         plan = build_plan_interactively(config_path=args.config, explicit_vault=args.vault)
         plan.dry_run = args.dry_run
+
+    # WIKI_PATH/vault.path alignment gate — runs before Installer.run() in the
+    # planning flow and before any config, Vault, seed, plugin, or environment
+    # writes.  MISMATCH is always blocking.  UNSET blocks only under --yes; in
+    # interactive mode the user sees informational guidance and decides.
+    rc = _check_wiki_path_alignment(plan.vault_path, hard_fail_unset=args.yes)
+    if rc != 0:
+        return rc
 
     try:
         Installer(plan).run()

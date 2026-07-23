@@ -78,6 +78,28 @@ interactively with the `force` overwrite policy, or fix/remove the config before
 retrying. Without an explicit `--config`, init uses the active profile's
 `$HERMES_HOME/cortex/config.yaml`, matching runtime config discovery.
 
+### WIKI_PATH / vault.path alignment gate
+
+Before any seed writes, `init` evaluates `WIKI_PATH` against the resolved
+effective `vault.path`.  Both values are normalized via
+`expanduser().resolve()`.  The gate has three outcomes:
+
+- **ALIGNED** — `WIKI_PATH` is set and matches the resolved `vault.path`.
+  Init proceeds normally.
+- **MISMATCH** — `WIKI_PATH` is set but points at a different path.  Init
+  aborts with exit code 2, actionable guidance, and **no writes** (no config,
+  Vault, seed, plugin, or environment files are modified).
+- **UNSET** — `WIKI_PATH` is not set.  In `--yes` mode init aborts with exit
+  code 2 and guidance to set `WIKI_PATH` for llm-wiki tool users.  In
+  interactive mode the guidance is shown but the user may proceed.
+
+`--dry-run` exposes the same alignment diagnostic (including exit code 2 for
+MISMATCH and `--yes` UNSET) without performing any writes.
+
+Cortex never persists or rewrites `WIKI_PATH`.  The gate is a read-only
+enforcement of the single-Vault contract between the llm-wiki skill and
+Cortex.
+
 ## Index
 
 Build or update `chunks.jsonl` from the configured vault.

@@ -85,6 +85,25 @@ config or a different configured `vault.path` fails before seed writes. Runtime
 commands, hooks, search, indexing, and lifecycle operations use the configured
 `vault.path`, not `WIKI_PATH`, `wiki.path`, or a fallback wiki directory.
 
+During `init`, Cortex also evaluates the `WIKI_PATH` environment variable against
+the resolved effective `vault.path` **before any writes** (including `--dry-run`,
+which exposes the same diagnostic).  Both values are normalized via
+`expanduser().resolve()`, and the alignment gate classifies the relationship into
+one of three states:
+
+- **ALIGNED** — `WIKI_PATH` is set and normalizes to the same path as
+  `vault.path`.  Init proceeds normally.
+- **MISMATCH** — `WIKI_PATH` is set but points at a different path.  A split-brain
+  Vault would result.  Init aborts with exit code 2 and actionable guidance, before
+  any config, Vault, seed, plugin, or environment writes.
+- **UNSET** — `WIKI_PATH` is not set.  In `--yes` mode init also aborts (exit 2)
+  with guidance to set `WIKI_PATH` if the llm-wiki skill is in use.  In interactive
+  mode the same guidance is shown but the user may choose to proceed.
+
+Cortex itself never persists or rewrites `WIKI_PATH`.  The alignment gate is a
+read-only diagnostic that enforces the single-Vault contract between the
+llm-wiki skill and Cortex.
+
 Fresh Vaults also include llm-wiki-compatible root/orientation material in that
 same Vault root: `SCHEMA.md`, `index.md`, `log.md`, and `raw/{articles,papers,transcripts,assets}`.
 `raw/`, `00_inbox/`, and `80_templates/` are excluded from curated answer indexing

@@ -46,12 +46,14 @@ from cortex.installer import (
     ConfigPersistenceError,
     InstallPlan,
     Installer,
+    WikiPathAlignment,
     _read_existing_vault_path,
     build_plan_interactively,
     default_config_path,
     default_hermes_memory_path,
     default_hermes_soul_path,
     default_hermes_user_path,
+    evaluate_wiki_path_alignment,
     resolve_init_vault_path,
 )
 
@@ -92,6 +94,30 @@ def _validate_yes_vault_path(config_path: Path, resolved_vault: Path, explicit_v
     return 0
 
 
+# ---- WIKI_PATH / vault.path alignment gate ---------------------------------
+
+
+def _check_wiki_path_alignment(vault_path: Path) -> int:
+    """Evaluate WIKI_PATH alignment before Installer.run() side effects.
+
+    Both UNSET and MISMATCH abort with exit code 2 before any config, Vault,
+    seed, plugin, or environment writes.  ALIGNED returns 0 to proceed.
+
+    Returns 0 to proceed or 2 to abort the init flow.
+    """
+    state, guidance = evaluate_wiki_path_alignment(vault_path)
+
+    if state in (WikiPathAlignment.UNSET, WikiPathAlignment.MISMATCH):
+        print(
+            f"  \u2717 WIKI_PATH/vault.path {state} \u2014 aborting before any writes.",
+            file=sys.stderr,
+        )
+        print(f"    {guidance}", file=sys.stderr)
+        return 2
+
+    return 0
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     if args.yes:
         config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path()
@@ -118,6 +144,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
     else:
         plan = build_plan_interactively(config_path=args.config, explicit_vault=args.vault)
         plan.dry_run = args.dry_run
+
+    # WIKI_PATH/vault.path alignment gate — runs before Installer.run() and
+    # before any config, Vault, seed, plugin, or environment writes.  Both
+    # UNSET and MISMATCH abort deterministically (exit 2) in every init path,
+    # including interactive invocation and --dry-run.
+    rc = _check_wiki_path_alignment(plan.vault_path)
+    if rc != 0:
+        return rc
 
     try:
         Installer(plan).run()

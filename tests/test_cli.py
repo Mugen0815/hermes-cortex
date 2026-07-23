@@ -148,14 +148,13 @@ def test_cli_init_yes_uses_wiki_path_only_for_fresh_init(
     assert f"Vault path default: {wiki.resolve()} (source: WIKI_PATH)" in out
 
 
-def test_cli_init_yes_existing_config_wins_over_wiki_path_and_runtime_uses_config(
+def test_cli_init_yes_existing_config_aligned_with_wiki_path_uses_config_at_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _isolate_hermes_home(tmp_path, monkeypatch)
     configured = tmp_path / "configured-vault"
-    wiki = tmp_path / "wiki-vault"
     cfg = tmp_path / "cortex" / "config.yaml"
     configured.mkdir()
     cfg.parent.mkdir()
@@ -168,23 +167,21 @@ def test_cli_init_yes_existing_config_wins_over_wiki_path_and_runtime_uses_confi
         encoding="utf-8",
     )
     before = cfg.read_text(encoding="utf-8")
-    monkeypatch.setenv("WIKI_PATH", str(wiki))
+    monkeypatch.setenv("WIKI_PATH", str(configured))
 
     rc = main(["init", "--yes", "--config", str(cfg)])
     assert rc == 0
     assert cfg.read_text(encoding="utf-8") == before
     assert (configured / "SCHEMA.md").exists()
-    assert not wiki.exists()
     out = capsys.readouterr().out
     assert f"Vault path default: {configured.resolve()} (source: existing config)" in out
-    assert "retained over WIKI_PATH" in out
     assert "planned vault.path" in out
 
     rc = main(["status", "--config", str(cfg)])
     assert rc == 0
     status_out = capsys.readouterr().out
     assert f"Vault:          {configured.resolve()} (ok)" in status_out
-    assert str(wiki.resolve()) not in status_out
+    assert str(configured.resolve()) in status_out
 
 
 def test_cli_init_yes_explicit_vault_mismatch_aborts_without_partial_seed(
@@ -210,6 +207,7 @@ def test_cli_init_yes_explicit_vault_mismatch_aborts_without_partial_seed(
         encoding="utf-8",
     )
     cfg_before = cfg.read_text(encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(new_vault))
 
     rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
 
@@ -246,6 +244,7 @@ def test_cli_init_yes_existing_config_without_readable_vault_path_aborts_before_
     cfg.parent.mkdir()
     cfg.write_text(config_text, encoding="utf-8")
     cfg_before = cfg.read_text(encoding="utf-8")
+    monkeypatch.setenv("WIKI_PATH", str(new_vault))
 
     rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
 
@@ -290,6 +289,7 @@ def test_cli_init_yes_explicit_vault_matching_config_succeeds(
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("WIKI_PATH", str(configured))
 
     rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(configured)])
 
@@ -308,6 +308,7 @@ def test_cli_init_yes_explicit_vault_fresh_config_succeeds(
     new_vault = tmp_path / "new-vault"
     cfg = tmp_path / "cortex" / "config.yaml"
     cfg.parent.mkdir()
+    monkeypatch.setenv("WIKI_PATH", str(new_vault))
 
     rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
 
@@ -335,6 +336,7 @@ def test_cli_init_yes_without_config_uses_active_profile_config(
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("WIKI_PATH", str(new_vault))
 
     rc = main(["init", "--yes", "--vault", str(new_vault)])
 
@@ -368,6 +370,7 @@ def test_cli_init_interactive_mismatch_returns_two_before_seed(
         "cortex.cli.build_plan_interactively",
         lambda config_path=None, explicit_vault=None: plan,
     )
+    monkeypatch.setenv("WIKI_PATH", str(new_vault))
 
     rc = main(["init", "--config", str(config), "--vault", str(new_vault)])
 
@@ -908,3 +911,183 @@ def test_cli_context_invalid_filter_returns_2(
     assert rc == 2
     err = capsys.readouterr().err
     assert "modified_after" in err
+
+
+# ---- WIKI_PATH alignment CLI integration ----------------------------------
+
+
+def test_cli_init_yes_wiki_path_mismatch_aborts_before_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WIKI_PATH set but differs from existing config vault.path → MISMATCH,
+    exit 2, no writes before the alignment gate."""
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    configured.mkdir()
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    cfg_before = cfg.read_bytes()
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    rc = main(["init", "--yes", "--config", str(cfg)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "MISMATCH" in err
+    assert "does not match" in err
+    assert not wiki.exists()
+    assert cfg.read_bytes() == cfg_before
+
+
+def test_cli_init_yes_wiki_path_unset_aborts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WIKI_PATH not set in --yes mode → UNSET, exit 2, no writes."""
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "UNSET" in err
+    assert "WIKI_PATH is not set" in err
+    assert not new_vault.exists()
+    assert not cfg.exists()
+
+
+def test_cli_init_interactive_wiki_path_unset_aborts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WIKI_PATH not set in interactive mode → UNSET, exit 2 (F-1:
+    interactive mode must abort for UNSET just like MISMATCH)."""
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    destination = tmp_path / "destination-vault"
+    config = tmp_path / "config.yaml"
+    plan = InstallPlan(
+        vault_path=destination,
+        config_path=config,
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=None,
+        overwrite_policy="force",
+    )
+    monkeypatch.setattr(
+        "cortex.cli.build_plan_interactively",
+        lambda config_path=None, explicit_vault=None: plan,
+    )
+
+    rc = main(["init", "--config", str(config)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "UNSET" in err
+    assert "WIKI_PATH is not set" in err
+    assert not destination.exists()
+
+
+def test_cli_init_interactive_wiki_path_mismatch_aborts_before_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WIKI_PATH set but differs from vault → MISMATCH, exit 2 (even in
+    interactive mode), before Installer.run() side effects."""
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    destination = tmp_path / "destination-vault"
+    wiki = tmp_path / "wiki-vault"
+    config = tmp_path / "config.yaml"
+    plan = InstallPlan(
+        vault_path=destination,
+        config_path=config,
+        chunks_path=tmp_path / "chunks.jsonl",
+        chroma_path=tmp_path / "chroma",
+        hermes_memory_path=None,
+        hermes_user_path=None,
+        hermes_soul_path=None,
+        overwrite_policy="force",
+    )
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+    monkeypatch.setattr(
+        "cortex.cli.build_plan_interactively",
+        lambda config_path=None, explicit_vault=None: plan,
+    )
+
+    rc = main(["init", "--config", str(config)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "MISMATCH" in err
+    assert "does not match" in err
+    assert not destination.exists()
+
+
+def test_cli_init_yes_wiki_path_mismatch_dry_run_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WIKI_PATH mismatch with --dry-run in --yes mode → same MISMATCH
+    diagnostic, exit 2, no writes."""
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    wiki = tmp_path / "wiki-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    configured.mkdir()
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    rc = main(["init", "--yes", "--dry-run", "--config", str(cfg)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "MISMATCH" in err
+    assert "does not match" in err
+    assert not wiki.exists()
+
+
+def test_cli_init_yes_wiki_path_unset_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WIKI_PATH unset with --dry-run in --yes mode → UNSET, exit 2, no writes."""
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+
+    rc = main(["init", "--yes", "--dry-run", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "UNSET" in err
+    assert "WIKI_PATH is not set" in err
+    assert not new_vault.exists()

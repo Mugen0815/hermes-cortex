@@ -22,7 +22,9 @@ from cortex.installer import (
     Prompt,
     RAW_FOLDERS,
     VAULT_FOLDERS,
+    WikiPathAlignment,
     build_plan_interactively,
+    evaluate_wiki_path_alignment,
     resolve_init_vault_path,
 )
 
@@ -520,6 +522,7 @@ def test_cli_init_yes_does_not_mutate_default_hermes_markdown(tmp_path: Path) ->
         {
             "HOME": str(home),
             "HERMES_HOME": str(hermes_home),
+            "WIKI_PATH": str(tmp_path / "vault"),
             "PYTHONPATH": str(repo_root),
         }
     )
@@ -727,3 +730,92 @@ def test_build_plan_abort(tmp_path: Path) -> None:
     ]
     with pytest.raises(SystemExit):
         build_plan_interactively(prompt=FakePrompt(answers))
+
+
+# ---- WIKI_PATH alignment evaluation --------------------------------------
+
+
+def test_evaluate_wiki_path_alignment_unset(tmp_path: Path) -> None:
+    """WIKI_PATH not set → UNSET with actionable guidance."""
+    state, guidance = evaluate_wiki_path_alignment(tmp_path / "vault")
+    assert state == WikiPathAlignment.UNSET
+    assert "WIKI_PATH is not set" in guidance
+    assert str(tmp_path / "vault") in guidance
+
+
+def test_evaluate_wiki_path_alignment_unset_empty_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty WIKI_PATH → UNSET (same as unset)."""
+    monkeypatch.setenv("WIKI_PATH", "")
+    state, guidance = evaluate_wiki_path_alignment(tmp_path / "vault")
+    assert state == WikiPathAlignment.UNSET
+
+
+def test_evaluate_wiki_path_alignment_unset_blank_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whitespace-only WIKI_PATH → UNSET."""
+    monkeypatch.setenv("WIKI_PATH", "   ")
+    state, guidance = evaluate_wiki_path_alignment(tmp_path / "vault")
+    assert state == WikiPathAlignment.UNSET
+
+
+def test_evaluate_wiki_path_alignment_aligned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIKI_PATH matches vault.path → ALIGNED."""
+    vault = tmp_path / "vault"
+    monkeypatch.setenv("WIKI_PATH", str(vault))
+    state, guidance = evaluate_wiki_path_alignment(vault)
+    assert state == WikiPathAlignment.ALIGNED
+    assert guidance == ""
+
+
+def test_evaluate_wiki_path_alignment_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIKI_PATH set but differs → MISMATCH."""
+    vault = tmp_path / "cortex-vault"
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki-vault"))
+    state, guidance = evaluate_wiki_path_alignment(vault)
+    assert state == WikiPathAlignment.MISMATCH
+    assert "does not match" in guidance
+    assert str(tmp_path / "wiki-vault") in guidance
+    assert str(vault) in guidance
+
+
+def test_evaluate_wiki_path_alignment_normalizes_trailing_slash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trailing slash on one side normalizes to same path → ALIGNED."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setenv("WIKI_PATH", str(vault) + "/")
+    state, guidance = evaluate_wiki_path_alignment(vault)
+    assert state == WikiPathAlignment.ALIGNED
+
+
+def test_evaluate_wiki_path_alignment_normalizes_dot_dot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """.. in WIKI_PATH resolves to the same absolute path → ALIGNED."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    wiki = tmp_path / "other" / ".." / "vault"
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+    state, guidance = evaluate_wiki_path_alignment(vault)
+    assert state == WikiPathAlignment.ALIGNED
+
+
+def test_evaluate_wiki_path_alignment_resolves_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIKI_PATH through a symlink resolving to the same real path → ALIGNED."""
+    vault = tmp_path / "real-vault"
+    vault.mkdir()
+    link = tmp_path / "link-to-vault"
+    link.symlink_to(vault, target_is_directory=True)
+    monkeypatch.setenv("WIKI_PATH", str(link))
+    state, guidance = evaluate_wiki_path_alignment(vault)
+    assert state == WikiPathAlignment.ALIGNED

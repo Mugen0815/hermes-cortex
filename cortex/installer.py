@@ -636,6 +636,52 @@ logging:
 """
 
 
+class WikiPathAlignment:
+    """Deterministic alignment states between WIKI_PATH and vault.path."""
+
+    UNSET = "UNSET"
+    ALIGNED = "ALIGNED"
+    MISMATCH = "MISMATCH"
+
+
+def evaluate_wiki_path_alignment(resolved_vault_path: str | Path) -> tuple[str, str]:
+    """Evaluate WIKI_PATH against the resolved effective Cortex vault.path.
+
+    Both values are normalized via ``expanduser().resolve()``.  The result is
+    one of three deterministic states:
+
+    - ``UNSET`` — ``WIKI_PATH`` is absent or empty.  Cortex ``vault.path`` is
+      the sole runtime Vault coordinate.
+    - ``ALIGNED`` — ``WIKI_PATH`` is set and normalizes to the same path.
+    - ``MISMATCH`` — ``WIKI_PATH`` is set but resolves to a different path,
+      which would create a split-brain Vault.
+
+    Returns ``(state, guidance)``.  ``guidance`` is empty for ``ALIGNED`` and
+    actionable for the other two states.
+    """
+    wiki_raw = os.environ.get("WIKI_PATH", "").strip()
+    resolved_vault = Path(resolved_vault_path).expanduser().resolve()
+
+    if not wiki_raw:
+        return (
+            WikiPathAlignment.UNSET,
+            f"WIKI_PATH is not set. Cortex uses vault.path ({resolved_vault}) as "
+            "its sole runtime Vault coordinate. If llm-wiki tools are used, set "
+            f"WIKI_PATH to '{resolved_vault}' to avoid a split-brain Vault.",
+        )
+
+    wiki_resolved = Path(wiki_raw).expanduser().resolve()
+    if wiki_resolved == resolved_vault:
+        return (WikiPathAlignment.ALIGNED, "")
+
+    return (
+        WikiPathAlignment.MISMATCH,
+        f"WIKI_PATH ({wiki_resolved}) does not match the resolved Cortex "
+        f"vault.path ({resolved_vault}). This would create a split-brain Vault. "
+        f"Align WIKI_PATH to '{resolved_vault}' or unset it before proceeding.",
+    )
+
+
 def resolve_init_vault_path(config_path: Path, explicit_vault: str | Path | None = None) -> tuple[Path, str, str]:
     """Resolve the init-time vault path without changing runtime config semantics.
 

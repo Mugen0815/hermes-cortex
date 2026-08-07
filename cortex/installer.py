@@ -458,6 +458,7 @@ class Installer:
         self._action(f"Vault path default: {self.plan.vault_path} (source: {self.plan.vault_path_source})")
         if self.plan.vault_path_note:
             self._action(self.plan.vault_path_note)
+        self._action(format_llm_wiki_alignment(self.plan.vault_path))
 
     # ---- File helpers (dry-run aware, overwrite policy aware) --------------
 
@@ -664,6 +665,37 @@ def resolve_init_vault_path(config_path: Path, explicit_vault: str | Path | None
     if wiki_path:
         return Path(wiki_path).expanduser().resolve(), "WIKI_PATH", ""
     return DEFAULT_VAULT_PATH, "default", ""
+
+
+def format_llm_wiki_alignment(vault_path: str | Path) -> str:
+    """Report alignment between the process ``WIKI_PATH`` and the selected Vault.
+
+    Read-only: compares the current process environment only and never writes
+    configuration. ``vault_path`` is the authoritative Cortex ``vault.path``
+    selected during init (already normalized by ``resolve_init_vault_path``).
+
+    Returns one of three stable operator-facing strings:
+
+    - unset:     WIKI_PATH empty / not present in this process.
+    - aligned:   WIKI_PATH and vault.path normalize to the same path.
+    - mismatch:  both set but resolving to different directories.
+    """
+    vault = Path(vault_path).expanduser().resolve()
+    raw_wiki = os.environ.get("WIKI_PATH", "").strip()
+    if not raw_wiki:
+        return (
+            f"LLM-Wiki alignment: WIKI_PATH is unset; Cortex vault.path is {vault}. "
+            "Cortex will not create or recommend ~/wiki. To use llm-wiki with Cortex, "
+            f"set WIKI_PATH={vault} in the explicitly chosen session/profile."
+        )
+    wiki = Path(raw_wiki).expanduser().resolve()
+    if wiki == vault:
+        return f"LLM-Wiki alignment: aligned; WIKI_PATH and Cortex vault.path are {vault}."
+    return (
+        f"LLM-Wiki alignment: mismatch; WIKI_PATH is {wiki}, Cortex vault.path is {vault}. "
+        "Cortex keeps vault.path authoritative and will not change environment configuration. "
+        f"Set WIKI_PATH={vault} in the explicitly chosen session/profile before using llm-wiki."
+    )
 
 
 def _read_existing_vault_path(config_path: Path) -> Optional[Path]:

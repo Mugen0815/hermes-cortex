@@ -85,6 +85,14 @@ config or a different configured `vault.path` fails before seed writes. Runtime
 commands, hooks, search, indexing, and lifecycle operations use the configured
 `vault.path`, not `WIKI_PATH`, `wiki.path`, or a fallback wiki directory.
 
+`init` and `init --dry-run` print a read-only LLM-Wiki alignment line that compares
+the current process `WIKI_PATH` with the selected `vault.path`. It reports `unset`,
+`aligned`, or `mismatch` and, when relevant, tells the operator to set
+`WIKI_PATH=<vault>` in the explicitly chosen session/profile before using the
+official Hermes `llm-wiki` skill. The diagnostic never writes configuration and
+never recommends a separate durable `~/wiki` tree; persistent `WIKI_PATH` is
+operator-managed.
+
 Fresh Vaults also include llm-wiki-compatible root/orientation material in that
 same Vault root: `SCHEMA.md`, `index.md`, `log.md`, and `raw/{articles,papers,transcripts,assets}`.
 `raw/`, `00_inbox/`, and `80_templates/` are excluded from curated answer indexing

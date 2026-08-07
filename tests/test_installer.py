@@ -23,6 +23,7 @@ from cortex.installer import (
     RAW_FOLDERS,
     VAULT_FOLDERS,
     build_plan_interactively,
+    format_llm_wiki_alignment,
     resolve_init_vault_path,
 )
 
@@ -727,3 +728,114 @@ def test_build_plan_abort(tmp_path: Path) -> None:
     ]
     with pytest.raises(SystemExit):
         build_plan_interactively(prompt=FakePrompt(answers))
+
+
+# ---- LLM-Wiki alignment diagnostic ------------------------------------------
+
+
+def test_format_llm_wiki_alignment_unset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WIKI_PATH", raising=False)
+    vault = tmp_path / "vault"
+
+    msg = format_llm_wiki_alignment(vault)
+
+    assert msg == (
+        f"LLM-Wiki alignment: WIKI_PATH is unset; Cortex vault.path is {vault.resolve()}. "
+        "Cortex will not create or recommend ~/wiki. To use llm-wiki with Cortex, "
+        f"set WIKI_PATH={vault.resolve()} in the explicitly chosen session/profile."
+    )
+
+
+def test_format_llm_wiki_alignment_equal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    monkeypatch.setenv("WIKI_PATH", str(vault))
+
+    msg = format_llm_wiki_alignment(vault)
+
+    assert msg == (
+        f"LLM-Wiki alignment: aligned; WIKI_PATH and Cortex vault.path are {vault.resolve()}."
+    )
+
+
+def test_format_llm_wiki_alignment_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    wiki = tmp_path / "wiki"
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    msg = format_llm_wiki_alignment(vault)
+
+    assert msg == (
+        f"LLM-Wiki alignment: mismatch; WIKI_PATH is {wiki.resolve()}, "
+        f"Cortex vault.path is {vault.resolve()}. "
+        "Cortex keeps vault.path authoritative and will not change environment configuration. "
+        f"Set WIKI_PATH={vault.resolve()} in the explicitly chosen session/profile before using llm-wiki."
+    )
+
+
+def test_format_llm_wiki_alignment_normalizes_redundant_segments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = tmp_path / "vault"
+    # WIKI_PATH with redundant '.' segments must normalize-equal the vault path.
+    monkeypatch.setenv("WIKI_PATH", str(base / "." / ".." / "vault"))
+
+    msg = format_llm_wiki_alignment(base)
+
+    assert msg.startswith("LLM-Wiki alignment: aligned;")
+
+
+def test_format_llm_wiki_alignment_accepts_unnormalized_vault_argument(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = tmp_path / "vault"
+    monkeypatch.setenv("WIKI_PATH", str(base))
+
+    msg = format_llm_wiki_alignment(base / "sub" / "..")
+
+    assert msg.startswith("LLM-Wiki alignment: aligned;")
+    assert str(base.resolve()) in msg
+
+
+def test_format_llm_wiki_alignment_empty_wiki_path_is_unset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    monkeypatch.setenv("WIKI_PATH", "   ")
+
+    msg = format_llm_wiki_alignment(vault)
+
+    assert "WIKI_PATH is unset" in msg
+
+
+def test_format_llm_wiki_alignment_does_not_mutate_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    wiki = tmp_path / "wiki"
+    monkeypatch.setenv("WIKI_PATH", str(wiki))
+
+    format_llm_wiki_alignment(vault)
+
+    assert os.environ.get("WIKI_PATH") == str(wiki)
+
+
+def test_run_diagnose_includes_alignment_action(
+    plan: InstallPlan,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WIKI_PATH", raising=False)
+    Installer(plan, prompt=FakePrompt([])).run()
+    assert any(a.startswith("LLM-Wiki alignment:") for a in plan.actions)

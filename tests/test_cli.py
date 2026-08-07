@@ -429,10 +429,12 @@ def test_cli_init_yes_mismatch_refusal_still_aborts_before_seed_with_alignment(
     """The existing ``--yes`` mismatch refusal must still abort before seed
     writes even when the alignment diagnostic is present.
 
-    F-01: the approved read-only alignment diagnostic must be emitted (on stdout,
-    before the stderr refusal) even when ``--yes`` returns exit 2 before
-    ``Installer.run()``.  The diagnostic must reflect the selected/current process
-    values and the config hash must be unchanged; no Vault may be created.
+    F-01: the approved read-only alignment diagnostic must be emitted on stdout
+    even when ``--yes`` returns exit 2 before ``Installer.run()``.  The refusal
+    goes to stderr and the alignment to stdout; in a merged stream the refusal
+    appears first and the alignment follows, both before exit 2.  The diagnostic
+    must reflect the selected/current process values and the config hash must be
+    unchanged; no Vault may be created.
     """
     _isolate_hermes_home(tmp_path, monkeypatch)
     configured = tmp_path / "configured-vault"

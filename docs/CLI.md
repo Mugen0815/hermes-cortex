@@ -83,11 +83,12 @@ retrying. Without an explicit `--config`, init uses the active profile's
 After path selection and before any write, `init` (including `--dry-run`) prints
 one of three stable alignment lines comparing the current process `WIKI_PATH`
 with the selected Cortex `vault.path`. When `--yes` refuses an explicit-vault vs
-existing-config conflict, the alignment line is emitted on stdout before the
-stderr refusal and exit 2, so the operator sees the selected/current process
-values even when no write occurs. The diagnostic is read-only: it never
-writes `.env`, shell startup files, config, Vault material, skills, cron,
-Gateway, or Hermes memory.
+existing-config conflict, the refusal is printed to stderr and the alignment
+line to stdout, both before exit 2. In a merged stream (e.g. `2>&1`) the stderr
+refusal appears first, followed by the stdout alignment line; there is no
+cross-stream ordering guarantee beyond both preceding exit 2. The diagnostic is
+read-only: it never writes `.env`, shell startup files, config, Vault material,
+skills, cron, Gateway, or Hermes memory.
 
 | Case | Output | Action |
 |---|---|---|

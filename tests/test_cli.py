@@ -259,6 +259,60 @@ def test_cli_init_yes_existing_config_without_readable_vault_path_aborts_before_
     assert cfg.read_text(encoding="utf-8") == cfg_before
 
 
+@pytest.mark.parametrize(
+    ("wiki_env_value", "expected_fragment"),
+    [
+        pytest.param(None, "WIKI_PATH is unset", id="unset"),
+        pytest.param("SELF", "aligned;", id="aligned"),
+        pytest.param("OTHER", "mismatch;", id="mismatch"),
+    ],
+)
+def test_cli_init_yes_refusal_emits_alignment_for_all_three_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    wiki_env_value: str | None,
+    expected_fragment: str,
+) -> None:
+    """F-01: every ``--yes`` explicit-vault vs existing-config refusal must emit
+    the approved alignment diagnostic before returning exit 2, covering the
+    unset / aligned / mismatch cases against the selected/current process values.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    configured.mkdir()
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    cfg_before = cfg.read_text(encoding="utf-8")
+    if wiki_env_value == "SELF":
+        monkeypatch.setenv("WIKI_PATH", str(new_vault))
+    elif wiki_env_value == "OTHER":
+        monkeypatch.setenv("WIKI_PATH", str(configured))
+    else:
+        monkeypatch.delenv("WIKI_PATH", raising=False)
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Refusing to seed" in captured.err
+    assert "LLM-Wiki alignment:" in captured.out
+    assert expected_fragment in captured.out
+    assert str(new_vault.resolve()) in captured.out
+    assert not new_vault.exists()
+    assert not (new_vault / "SCHEMA.md").exists()
+    assert cfg.read_text(encoding="utf-8") == cfg_before
+
+
 def test_init_help_describes_vault_selection_without_runtime_override(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -295,6 +349,131 @@ def test_cli_init_yes_explicit_vault_matching_config_succeeds(
 
     assert rc == 0
     assert (configured / "SCHEMA.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("wiki_env_value", "expected_fragment"),
+    [
+        pytest.param(None, "WIKI_PATH is unset", id="unset"),
+        pytest.param("SELF", "aligned;", id="aligned"),
+        pytest.param("OTHER", "mismatch;", id="mismatch"),
+    ],
+)
+def test_cli_init_dry_run_reports_llm_wiki_alignment_for_all_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    wiki_env_value: str | None,
+    expected_fragment: str,
+) -> None:
+    """``init --dry-run`` must print the LLM-Wiki alignment line for all three
+    cases and write nothing to disk.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    vault = tmp_path / "vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    if wiki_env_value == "SELF":
+        monkeypatch.setenv("WIKI_PATH", str(vault))
+    elif wiki_env_value == "OTHER":
+        monkeypatch.setenv("WIKI_PATH", str(tmp_path / "other-wiki"))
+    else:
+        monkeypatch.delenv("WIKI_PATH", raising=False)
+
+    rc = main(["init", "--yes", "--dry-run", "--vault", str(vault), "--config", str(cfg)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "LLM-Wiki alignment:" in out
+    assert expected_fragment in out
+    assert str(vault.resolve()) in out
+    # dry-run must not write anything
+    assert not cfg.exists()
+    assert not vault.exists()
+
+
+def test_cli_init_dry_run_alignment_does_not_mutate_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``init --dry-run`` with mismatching WIKI_PATH must not mutate any file
+    tree or mtimes under tmp_path.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    vault = tmp_path / "vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "other-wiki"))
+
+    before = {
+        p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+    }
+
+    rc = main(["init", "--yes", "--dry-run", "--vault", str(vault), "--config", str(cfg)])
+
+    assert rc == 0
+    after = {
+        p.relative_to(tmp_path).as_posix(): p.stat().st_mtime_ns
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+    }
+    assert after == before
+
+
+def test_cli_init_yes_mismatch_refusal_still_aborts_before_seed_with_alignment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The existing ``--yes`` mismatch refusal must still abort before seed
+    writes even when the alignment diagnostic is present.
+
+    F-01: the approved read-only alignment diagnostic must be emitted on stdout
+    even when ``--yes`` returns exit 2 before ``Installer.run()``.  The refusal
+    goes to stderr and the alignment to stdout; in a merged stream the refusal
+    appears first and the alignment follows, both before exit 2.  The diagnostic
+    must reflect the selected/current process values and the config hash must be
+    unchanged; no Vault may be created.
+    """
+    _isolate_hermes_home(tmp_path, monkeypatch)
+    configured = tmp_path / "configured-vault"
+    configured.mkdir()
+    new_vault = tmp_path / "new-vault"
+    cfg = tmp_path / "cortex" / "config.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text(
+        CONFIG_TEMPLATE.format(
+            vault=configured,
+            chunks=tmp_path / "chunks.jsonl",
+            chroma=tmp_path / "chroma",
+        ),
+        encoding="utf-8",
+    )
+    cfg_before = cfg.read_text(encoding="utf-8")
+    # WIKI_PATH aligns with the configured vault, not the explicit --vault.
+    monkeypatch.setenv("WIKI_PATH", str(configured))
+
+    rc = main(["init", "--yes", "--config", str(cfg), "--vault", str(new_vault)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    err = captured.err
+    out = captured.out
+    # Refusal diagnostic on stderr, unchanged behaviour.
+    assert "Refusing to seed" in err
+    assert "points at" in err
+    assert "--yes" in err
+    # F-01: alignment diagnostic on stdout, using selected/current process values.
+    assert "LLM-Wiki alignment:" in out
+    # Selected vault is the explicit --vault (new_vault); WIKI_PATH is configured.
+    assert str(new_vault.resolve()) in out
+    assert str(configured.resolve()) in out
+    assert "mismatch;" in out
+    # No partial seed, no config mutation, no newly created Vault.
+    assert not new_vault.exists()
+    assert not (new_vault / "SCHEMA.md").exists()
+    assert cfg.read_text(encoding="utf-8") == cfg_before
 
 
 def test_cli_init_yes_explicit_vault_fresh_config_succeeds(

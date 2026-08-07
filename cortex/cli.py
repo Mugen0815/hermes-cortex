@@ -52,6 +52,7 @@ from cortex.installer import (
     default_hermes_memory_path,
     default_hermes_soul_path,
     default_hermes_user_path,
+    format_llm_wiki_alignment,
     resolve_init_vault_path,
 )
 
@@ -98,6 +99,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
         vault_path, vault_source, vault_note = resolve_init_vault_path(config_path, args.vault)
         rc = _validate_yes_vault_path(config_path, vault_path, args.vault)
         if rc != 0:
+            # F-01: emit the approved read-only alignment diagnostic before the
+            # no-write refusal returns. On success Installer.run() prints it via
+            # _diagnose_path_selection(); only the refusal path returns before
+            # Installer.run() and must print it here to avoid a missing report.
+            print(format_llm_wiki_alignment(vault_path))
             return rc
         memory_path = default_hermes_memory_path()
         user_path = default_hermes_user_path()

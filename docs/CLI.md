@@ -78,6 +78,30 @@ interactively with the `force` overwrite policy, or fix/remove the config before
 retrying. Without an explicit `--config`, init uses the active profile's
 `$HERMES_HOME/cortex/config.yaml`, matching runtime config discovery.
 
+### LLM-Wiki alignment diagnostic
+
+After path selection and before any write, `init` (including `--dry-run`) prints
+one of three stable alignment lines comparing the current process `WIKI_PATH`
+with the selected Cortex `vault.path`. When `--yes` refuses an explicit-vault vs
+existing-config conflict, the refusal is printed to stderr and the alignment
+line to stdout, both before exit 2. In a merged stream (e.g. `2>&1`) the stderr
+refusal appears first, followed by the stdout alignment line; there is no
+cross-stream ordering guarantee beyond both preceding exit 2. The diagnostic is
+read-only: it never writes `.env`, shell startup files, config, Vault material,
+skills, cron, Gateway, or Hermes memory.
+
+| Case | Output | Action |
+|---|---|---|
+| `WIKI_PATH` unset | `LLM-Wiki alignment: WIKI_PATH is unset; Cortex vault.path is <vault>. Cortex will not create or recommend ~/wiki. To use llm-wiki with Cortex, set WIKI_PATH=<vault> in the explicitly chosen session/profile.` | Operator decides whether to set `WIKI_PATH` |
+| normalized paths equal | `LLM-Wiki alignment: aligned; WIKI_PATH and Cortex vault.path are <vault>.` | None |
+| normalized paths differ | `LLM-Wiki alignment: mismatch; WIKI_PATH is <wiki>, Cortex vault.path is <vault>. Cortex keeps vault.path authoritative and will not change environment configuration. Set WIKI_PATH=<vault> in the explicitly chosen session/profile before using llm-wiki.` | Operator reconciles `WIKI_PATH` |
+
+Paths in the diagnostic are expanded and resolved. The diagnostic inspects only
+the process invoking init; it does not claim global alignment across profiles,
+terminals, gateways, cron, or services. Persistent `WIKI_PATH` configuration is
+operator-managed. Cortex does not create, recommend, or require a separate
+durable `~/wiki` tree.
+
 ## Index
 
 Build or update `chunks.jsonl` from the configured vault.

@@ -264,8 +264,12 @@ class HybridSearcher:
         # Imported lazily so a missing chromadb dep doesn't blow up at import.
         try:
             import chromadb
-        except ImportError:
-            log.warning("chromadb not installed; vector search disabled")
+        except ImportError as exc:
+            log.warning(
+                "chromadb unavailable; vector search disabled: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
             return None
         try:
             client = chromadb.PersistentClient(path=str(self.cfg.index.chroma_path))

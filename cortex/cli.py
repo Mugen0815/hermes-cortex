@@ -734,14 +734,26 @@ def _cmd_config_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
+    from cortex.runtime_health import embedding_stack_health, pip_check_health
+
     cfg = resolve_config(getattr(args, "config", None))
     plugin_root = Path(__file__).resolve().parents[1]
+    embedding_health = embedding_stack_health()
+    dependency_health = pip_check_health()
     print("hermes-cortex status")
     print(f"  Plugin/code:    {plugin_root}")
     print(f"  Config:         {cfg.source_path}")
     print(f"  Vault:          {cfg.vault.path} ({'ok' if cfg.vault.path.exists() else 'missing'})")
     print(f"  Chunks:         {cfg.index.chunks_path} ({'ok' if cfg.index.chunks_path.exists() else 'missing'})")
     print(f"  Chroma:         {cfg.index.chroma_path} ({'ok' if cfg.index.chroma_path.exists() else 'missing'})")
+    print(
+        f"  Embedding stack: {'ok' if embedding_health.ok else 'unavailable'}"
+        f" — {embedding_health.detail}"
+    )
+    print(
+        f"  Python deps:    {'ok' if dependency_health.ok else 'broken'}"
+        f" — {dependency_health.detail}"
+    )
     print(f"  Embeddings:     {cfg.embeddings.model} ({cfg.embeddings.device})")
     print(f"  Embedding cache: {cfg.embeddings.cache_folder or '(sentence-transformers default)'}")
     print(f"  Embed local:    {cfg.embeddings.local_files_only}")
@@ -769,7 +781,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"  Legacy context: {_legacy_context_label(cfg)}")
     print(f"  Load skill:     {cfg.hooks.load_skill}")
     _print_hook_lifecycle(cfg, indent="  ")
-    return 0
+    return 0 if embedding_health.ok and dependency_health.ok else 1
 
 
 def _cmd_wiki_health(args: argparse.Namespace) -> int:

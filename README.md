@@ -63,6 +63,13 @@ hermes tools enable cortex
 ./install.sh --with-hermes-venv --with-hermes-skills
 ```
 
+The shared-venv install is deliberately fail-closed. It refuses to modify an
+already inconsistent Hermes environment, preserves every dependency version
+already owned by that environment while allowing `hermes-cortex` itself to
+advance, uses the repository's versioned `uv.lock` only to constrain missing Cortex dependencies, and
+finishes with a dependency and critical-import check. This prevents a plugin
+update from silently replacing Hermes' own package set.
+
 Initialize the vault config and build retrieval artifacts:
 
 ```bash
@@ -117,6 +124,7 @@ Expected:
 - plugin `cortex` is enabled
 - toolset `cortex` exposes `vault_search`, `vault_read_note`, `vault_build_context`
 - `hermes cortex --help` lists the Cortex CLI commands
+- `hermes cortex status` reports `Embedding stack: ok` and `Python deps: ok`
 - `hermes cortex search ...` returns vault results after `index` + `embed`
 - `scripts/smoke-runtime-cortex-cli.sh` confirms the eval JSON envelope for
   `hermes cortex search-eval --json --allow-failures`
@@ -412,6 +420,12 @@ git pull --ff-only origin main
 scripts/smoke-runtime-cortex-cli.sh
 ```
 
+After updating Hermes itself, rerun the Cortex installer and smoke test before
+restarting long-lived workers. The installer will stop before modifying the
+shared Hermes venv when the Hermes update left incompatible requirements behind;
+do not resolve that by blindly syncing Cortex's complete lock into Hermes'
+environment.
+
 Then start a new Hermes session or `/reset` the current one. Restart the gateway
 only when runtime code or hooks changed and gateway workers need to load the new
 code. Pure README/docs changes do not require a restart.
@@ -429,6 +443,25 @@ hermes plugins list
 hermes tools list
 hermes cortex status
 ```
+
+### Status reports broken Python dependencies or an unavailable embedding stack
+
+`hermes cortex status` imports Chroma and SentenceTransformers and runs a
+read-only dependency check. A non-zero exit means hybrid retrieval is not
+healthy even when the Chroma data directory exists and BM25 results still
+appear.
+
+```bash
+VENV="$HOME/.hermes/hermes-agent/venv"
+"$VENV/bin/python" -m pip check
+"$VENV/bin/python" -c 'import chromadb, sentence_transformers; print("imports ok")'
+```
+
+Record the installed versions and repair the exact violated requirement as a
+coordinated dependency family. Do not run `uv sync` against the shared Hermes
+venv and do not blindly upgrade or downgrade one transitive package in
+isolation. Then rerun `./install.sh --with-hermes-venv`, `hermes cortex embed`,
+and the runtime smoke script.
 
 ### Search returns stale or weird results
 

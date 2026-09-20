@@ -41,6 +41,14 @@ DEV_INSTALL=1
 INSTALL_HERMES_VENV=0
 INSTALL_HERMES_SKILLS=0
 HERMES_AGENT_VENV="${HERMES_AGENT_VENV:-}"
+SHARED_VENV_CONSTRAINTS=""
+
+cleanup() {
+  if [[ -n "$SHARED_VENV_CONSTRAINTS" && -f "$SHARED_VENV_CONSTRAINTS" ]]; then
+    rm -f -- "$SHARED_VENV_CONSTRAINTS"
+  fi
+}
+trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -145,15 +153,42 @@ if [[ "$INSTALL_HERMES_VENV" -eq 1 ]]; then
     echo "  Install Hermes first, or pass --hermes-venv PATH explicitly." >&2
   else
     echo "==> Installing hermes-cortex dependencies/CLI into Hermes Agent venv: $HERMES_AGENT_VENV"
+    if [[ ! -f "$SCRIPT_DIR/uv.lock" ]]; then
+      echo "ERROR: uv.lock is required for a shared Hermes venv install." >&2
+      exit 1
+    fi
+    if ! PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+      "$HERMES_AGENT_VENV/bin/python" -m cortex.shared_venv dependency-check; then
+      echo "ERROR: Hermes Agent venv is already inconsistent; refusing to modify it." >&2
+      echo "  Repair the reported requirements first, then rerun this installer." >&2
+      exit 1
+    fi
+
+    SHARED_VENV_CONSTRAINTS="$(mktemp "${TMPDIR:-/tmp}/hermes-cortex-constraints.XXXXXX")"
+    PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+      "$HERMES_AGENT_VENV/bin/python" -m cortex.shared_venv constraints \
+      --lock "$SCRIPT_DIR/uv.lock" \
+      --output "$SHARED_VENV_CONSTRAINTS"
+
     if command -v uv >/dev/null 2>&1; then
-      uv pip install --python "$HERMES_AGENT_VENV/bin/python" -e "$SCRIPT_DIR" -q 2>&1 | tail -3
+      uv pip install \
+        --python "$HERMES_AGENT_VENV/bin/python" \
+        --constraints "$SHARED_VENV_CONSTRAINTS" \
+        -e "$SCRIPT_DIR"
     elif "$HERMES_AGENT_VENV/bin/python" -m pip --version >/dev/null 2>&1; then
-      "$HERMES_AGENT_VENV/bin/python" -m pip install -e "$SCRIPT_DIR" -q 2>&1 | tail -3
+      "$HERMES_AGENT_VENV/bin/python" -m pip install \
+        --constraint "$SHARED_VENV_CONSTRAINTS" \
+        -e "$SCRIPT_DIR"
     else
       echo "ERROR: Hermes Agent venv has no pip, and uv is not available on PATH." >&2
       echo "  Install uv or bootstrap pip in: $HERMES_AGENT_VENV" >&2
       exit 1
     fi
+
+    PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+      "$HERMES_AGENT_VENV/bin/python" -m cortex.shared_venv dependency-check
+    PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+      "$HERMES_AGENT_VENV/bin/python" -m cortex.shared_venv import-check
 
     echo "==> Hermes venv ready. Runtime plugin loading now uses the Git checkout:"
     echo "    $HOME/.hermes/plugins/cortex"

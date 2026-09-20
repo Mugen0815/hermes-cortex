@@ -88,9 +88,23 @@ hermes cortex status
 
 What that install command does:
 
-- installs/refreshes the Python package and CLI in the Hermes Agent venv;
+- verifies that the existing Hermes Agent venv is internally consistent before writing;
+- merges host-installed versions with Cortex's lock, with host dependency versions winning
+  overlaps while allowing `hermes-cortex` itself to advance;
+- installs/refreshes the Python package and CLI under those constraints;
+- verifies installed requirements plus the Chroma/SentenceTransformers imports afterwards;
 - copies the bundled long-term-memory skills into `~/.hermes/skills/`;
 - leaves profile-local Cortex config and vector/index state untouched.
+
+`uv.lock` is versioned because the shared-venv installer consumes it as a
+deployment contract. After changing dependency metadata, regenerate it with
+`uv lock` and verify it with `uv lock --check`; a clean source checkout must
+never depend on an ignored developer-local lockfile.
+
+This is intentionally not a full `uv sync` against the shared Hermes venv.
+Such a sync can remove or replace unrelated Hermes, server, Torch, or plugin
+dependencies. If the preflight dependency check fails, repair the exact runtime
+conflict first rather than bypassing the guard.
 
 Restart the gateway only when runtime code or hooks changed and gateway workers
 need to load the new code. Pure README/docs changes do not require a restart.

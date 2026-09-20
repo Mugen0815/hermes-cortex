@@ -7,6 +7,18 @@ import subprocess
 from pathlib import Path
 
 
+def test_shared_venv_lock_is_part_of_the_source_contract() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    ignored_entries = {
+        line.strip()
+        for line in (repo / ".gitignore").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert (repo / "uv.lock").is_file()
+    assert "uv.lock" not in ignored_entries
+
+
 def test_with_hermes_venv_uses_uv_when_hermes_venv_has_no_pip(tmp_path: Path) -> None:
     """A uv-created Hermes venv may have python but no bin/pip."""
     repo = Path(__file__).resolve().parents[1]
@@ -49,6 +61,10 @@ def test_with_hermes_venv_uses_uv_when_hermes_venv_has_no_pip(tmp_path: Path) ->
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    uv_calls = uv_log.read_text()
+    uv_calls = uv_log.read_text().splitlines()
     assert f"pip install --python {project_venv / 'bin' / 'python'} -e ." in uv_calls
-    assert f"pip install --python {hermes_venv / 'bin' / 'python'} -e {repo}" in uv_calls
+    hermes_call = next(
+        call for call in uv_calls if f"--python {hermes_venv / 'bin' / 'python'}" in call
+    )
+    assert "--constraints " in hermes_call
+    assert hermes_call.endswith(f"-e {repo}")

@@ -66,7 +66,7 @@ hermes tools enable cortex
 The shared-venv install is deliberately fail-closed. It refuses to modify an
 already inconsistent Hermes environment, preserves every dependency version
 already owned by that environment while allowing `hermes-cortex` itself to
-advance, uses `uv.lock` only to constrain missing Cortex dependencies, and
+advance, uses the repository's versioned `uv.lock` only to constrain missing Cortex dependencies, and
 finishes with a dependency and critical-import check. This prevents a plugin
 update from silently replacing Hermes' own package set.
 

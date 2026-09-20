@@ -96,6 +96,11 @@ What that install command does:
 - copies the bundled long-term-memory skills into `~/.hermes/skills/`;
 - leaves profile-local Cortex config and vector/index state untouched.
 
+`uv.lock` is versioned because the shared-venv installer consumes it as a
+deployment contract. After changing dependency metadata, regenerate it with
+`uv lock` and verify it with `uv lock --check`; a clean source checkout must
+never depend on an ignored developer-local lockfile.
+
 This is intentionally not a full `uv sync` against the shared Hermes venv.
 Such a sync can remove or replace unrelated Hermes, server, Torch, or plugin
 dependencies. If the preflight dependency check fails, repair the exact runtime

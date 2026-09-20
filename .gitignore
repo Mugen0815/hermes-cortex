@@ -30,7 +30,6 @@ config.yaml
 graph.html
 graph_data.json
 graph_viewer.html
-uv.lock
 
 # IDE
 .vscode/

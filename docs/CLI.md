@@ -315,7 +315,12 @@ Commands:
 |---|---|
 | `config path` | Print active Cortex config path |
 | `config show` | Print effective config summary and hook lifecycle rows |
-| `status` | Show plugin, config, vault, index, graph, and hook status |
+| `status` | Show plugin, config, vault, index, embedding-stack, dependency, and hook status; exits non-zero when critical imports or installed requirements are broken |
+
+`status` imports both Chroma and SentenceTransformers and runs a read-only
+installed-requirements check. An existing Chroma directory alone is not proof
+that vector retrieval is usable. The command does not create or open a Chroma
+collection; use `embed` and a search smoke to verify collection-level health.
 
 ## Lifecycle
 

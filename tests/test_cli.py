@@ -17,6 +17,7 @@ import yaml
 
 from cortex.cli import main
 from cortex.installer import InstallPlan
+from cortex.runtime_health import HealthCheck
 
 
 CONFIG_TEMPLATE = dedent("""\
@@ -614,6 +615,57 @@ hooks:
     assert "legacy_context_injection" in out
     assert "legacy-ignored" in out
     assert "ignored because semantic hook blocks are present" in out
+
+
+def test_status_fails_when_vector_backend_import_is_broken(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _setup(tmp_path)
+    monkeypatch.setattr(
+        "cortex.runtime_health.embedding_stack_health",
+        lambda: HealthCheck(
+            ok=False,
+            detail="ModuleNotFoundError: missing coordinated OpenTelemetry package",
+        ),
+    )
+    monkeypatch.setattr(
+        "cortex.runtime_health.pip_check_health",
+        lambda: HealthCheck(ok=True, detail="No broken requirements found."),
+    )
+
+    rc = main(["status", "--config", str(cfg)])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "Embedding stack: unavailable" in out
+    assert "missing coordinated OpenTelemetry package" in out
+    assert "Python deps:    ok" in out
+
+
+def test_status_fails_when_shared_environment_has_broken_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _setup(tmp_path)
+    monkeypatch.setattr(
+        "cortex.runtime_health.embedding_stack_health",
+        lambda: HealthCheck(ok=True, detail="chromadb and sentence_transformers imports ok"),
+    )
+    monkeypatch.setattr(
+        "cortex.runtime_health.pip_check_health",
+        lambda: HealthCheck(ok=False, detail="grpc exporter requires sdk==1.44.0"),
+    )
+
+    rc = main(["status", "--config", str(cfg)])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "Embedding stack: ok" in out
+    assert "Python deps:    broken" in out
+    assert "grpc exporter requires sdk==1.44.0" in out
 
 
 def test_cli_index_subcommand(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

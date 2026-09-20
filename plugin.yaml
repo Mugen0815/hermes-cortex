@@ -2,6 +2,7 @@ name: cortex
 version: "0.1.0"
 description: hermes-cortex vault tools — hybrid search, note reading, context building
 kind: standalone
+requires_hermes: ">=0.17,<0.22"
 provides_tools:
   - vault_search
   - vault_read_note

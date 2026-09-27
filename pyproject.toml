@@ -30,8 +30,8 @@ dev = [
     "build>=1.2",
     "pytest>=8",
     "pytest-cov>=5",
-    # Ruff 0.16 expands the default rule set; pin the reviewed CI baseline.
-    "ruff==0.15.12",
+    # Keep the reviewed pre-0.16 rule set without conflicting with a host workspace pin.
+    "ruff>=0.15.10,<0.16",
     "wheel>=0.43",
 ]
 

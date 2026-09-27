@@ -601,7 +601,7 @@ requires-dist = [
     { name = "python-frontmatter", specifier = ">=1.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.12" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.10,<0.16" },
     { name = "sentence-transformers", specifier = ">=2.7" },
     { name = "wheel", marker = "extra == 'dev'", specifier = ">=0.43" },
 ]
